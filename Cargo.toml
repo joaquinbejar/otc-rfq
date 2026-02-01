@@ -77,6 +77,7 @@ bytes = { workspace = true }
 
 [build-dependencies]
 tonic-build = { workspace = true }
+tonic-prost-build = { workspace = true }
 prost-build = { workspace = true }
 # ironsbe-codegen = { workspace = true }
 
@@ -95,20 +96,20 @@ tokio = { version = "1.49", features = ["full", "tracing"] }
 # Web frameworks
 axum = { version = "0.8", features = ["ws", "macros"] }
 axum-extra = { version = "0.12", features = ["typed-header"] }
-tonic = { version = "0.12", features = ["tls"] }
+tonic = { version = "0.14", features = ["transport", "tls-ring"] }
 tower = { version = "0.5", features = ["full"] }
 tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-prost = "0.13"
+prost = "0.14"
 
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "uuid", "chrono", "rust_decimal"] }
 
 # Caching
-redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+redis = { version = "1.0", features = ["tokio-comp", "connection-manager"] }
 
 # Error handling
 thiserror = "2.0"
@@ -127,10 +128,10 @@ chrono = { version = "0.4", features = ["serde"] }
 ethers = { version = "2.0", features = ["rustls"] }
 
 # HTTP client
-reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+reqwest = { version = "0.13", features = ["json", "rustls"] }
 
 # Authentication
-jsonwebtoken = "9.3"
+jsonwebtoken = "10.3"
 
 # Configuration
 config = "0.15"
@@ -144,15 +145,16 @@ dashmap = "6.1"
 bytes = "1.11"
 
 # Build dependencies
-tonic-build = "0.12"
-prost-build = "0.13"
+tonic-build = "0.14"
+tonic-prost-build = "0.14"
+prost-build = "0.14"
 
 # Dev dependencies
 tokio-test = "0.4"
 wiremock = "0.6"
 proptest = "1.9"
 testcontainers = "0.26"
-criterion = { version = "0.5", features = ["async_tokio"] }
+criterion = { version = "0.8", features = ["async_tokio"] }
 
 # IronFix for FIX protocol (optional - enable when available)
 # ironfix = { git = "https://github.com/joaquinbejar/IronFix", branch = "main" }

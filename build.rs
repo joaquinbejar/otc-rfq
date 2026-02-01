@@ -38,13 +38,10 @@ fn compile_protos() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    // Create output directory
-    let out_dir = PathBuf::from(std::env::var("OUT_DIR")?);
-
-    tonic_build::configure()
+    // Compile all proto files using tonic_prost_build with proper include path
+    tonic_prost_build::configure()
         .build_server(true)
         .build_client(true)
-        .out_dir(&out_dir)
         .compile_protos(&proto_files, &[proto_dir])?;
 
     Ok(())
