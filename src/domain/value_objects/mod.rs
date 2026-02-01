@@ -31,6 +31,10 @@
 //!
 //! - [`Symbol`]: Trading pair representation (e.g., BTC/USD)
 //! - [`Instrument`]: Tradeable instrument with metadata
+//!
+//! ## State Types
+//!
+//! - [`RfqState`]: RFQ lifecycle state machine
 
 pub mod arithmetic;
 pub mod compliance;
@@ -49,4 +53,5 @@ pub use ids::{CounterpartyId, EventId, QuoteId, RfqId, TradeId, VenueId};
 pub use instrument::{Instrument, InstrumentBuilder};
 pub use price::Price;
 pub use quantity::Quantity;
+pub use rfq_state::{InvalidRfqStateError, RfqState};
 pub use symbol::{Symbol, SymbolError};
