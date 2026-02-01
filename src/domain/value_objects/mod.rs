@@ -35,6 +35,11 @@
 //! ## State Types
 //!
 //! - [`RfqState`]: RFQ lifecycle state machine
+//!
+//! ## Compliance Types
+//!
+//! - [`ComplianceCheckResults`]: Results of KYC/AML checks
+//! - [`RegulatoryFlag`]: Regulatory flags raised during compliance checks
 
 pub mod arithmetic;
 pub mod compliance;
@@ -48,6 +53,7 @@ pub mod symbol;
 pub mod timestamp;
 
 pub use arithmetic::{div_round, ArithmeticError, ArithmeticResult, CheckedArithmetic, Rounding};
+pub use compliance::{ComplianceCheckResults, ComplianceCheckResultsBuilder, RegulatoryFlag};
 pub use enums::{AssetClass, Blockchain, OrderSide, ParseEnumError, SettlementMethod, VenueType};
 pub use ids::{CounterpartyId, EventId, QuoteId, RfqId, TradeId, VenueId};
 pub use instrument::{Instrument, InstrumentBuilder};
