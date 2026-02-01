@@ -26,6 +26,11 @@
 //! - [`Blockchain`]: Supported blockchain networks
 //! - [`VenueType`]: Types of liquidity venues
 //! - [`SettlementMethod`]: On-chain or off-chain settlement
+//!
+//! ## Trading Types
+//!
+//! - [`Symbol`]: Trading pair representation (e.g., BTC/USD)
+//! - [`Instrument`]: Tradeable instrument with metadata
 
 pub mod arithmetic;
 pub mod compliance;
@@ -41,5 +46,7 @@ pub mod timestamp;
 pub use arithmetic::{div_round, ArithmeticError, ArithmeticResult, CheckedArithmetic, Rounding};
 pub use enums::{AssetClass, Blockchain, OrderSide, ParseEnumError, SettlementMethod, VenueType};
 pub use ids::{CounterpartyId, EventId, QuoteId, RfqId, TradeId, VenueId};
+pub use instrument::{Instrument, InstrumentBuilder};
 pub use price::Price;
 pub use quantity::Quantity;
+pub use symbol::{Symbol, SymbolError};
