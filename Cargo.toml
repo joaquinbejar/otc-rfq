@@ -90,11 +90,11 @@ serde_json = { workspace = true }
 
 [workspace.dependencies]
 # Async runtime
-tokio = { version = "1.44", features = ["full", "tracing"] }
+tokio = { version = "1.49", features = ["full", "tracing"] }
 
 # Web frameworks
 axum = { version = "0.8", features = ["ws", "macros"] }
-axum-extra = { version = "0.10", features = ["typed-header"] }
+axum-extra = { version = "0.12", features = ["typed-header"] }
 tonic = { version = "0.12", features = ["tls"] }
 tower = { version = "0.5", features = ["full"] }
 tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip"] }
@@ -119,8 +119,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # Types
-uuid = { version = "1.16", features = ["v4", "serde"] }
-rust_decimal = { version = "1.37", features = ["serde", "serde-with-str"] }
+uuid = { version = "1.20", features = ["v4", "serde"] }
+rust_decimal = { version = "1.40", features = ["serde", "serde-with-str"] }
 chrono = { version = "0.4", features = ["serde"] }
 
 # Crypto and blockchain
@@ -141,7 +141,7 @@ async-trait = "0.1"
 futures = "0.3"
 parking_lot = "0.12"
 dashmap = "6.1"
-bytes = "1.10"
+bytes = "1.11"
 
 # Build dependencies
 tonic-build = "0.12"
@@ -150,8 +150,8 @@ prost-build = "0.13"
 # Dev dependencies
 tokio-test = "0.4"
 wiremock = "0.6"
-proptest = "1.6"
-testcontainers = "0.23"
+proptest = "1.9"
+testcontainers = "0.26"
 criterion = { version = "0.5", features = ["async_tokio"] }
 
 # IronFix for FIX protocol (optional - enable when available)
