@@ -19,6 +19,10 @@ pub mod rfq;
 pub mod trade;
 pub mod venue;
 
+pub use counterparty::{
+    Counterparty, CounterpartyLimits, CounterpartyType, InvalidCounterpartyTypeError,
+    InvalidKycStatusError, KycStatus, WalletAddress,
+};
 pub use quote::{Quote, QuoteBuilder, QuoteMetadata};
 pub use rfq::{ComplianceResult, Rfq, RfqBuilder};
 pub use trade::{InvalidSettlementStateError, SettlementState, Trade};
