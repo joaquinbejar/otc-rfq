@@ -1,0 +1,115 @@
+syntax = "proto3";
+
+package otc.rfq.v1;
+
+option java_multiple_files = true;
+option java_package = "com.otc.rfq.v1";
+
+import "otc/rfq/v1/common.proto";
+
+// RFQ Service - High-performance trading operations
+service RfqService {
+  // Create a new RFQ request
+  rpc CreateRfq(CreateRfqRequest) returns (CreateRfqResponse);
+
+  // Get RFQ by ID
+  rpc GetRfq(GetRfqRequest) returns (GetRfqResponse);
+
+  // Stream quotes for an RFQ
+  rpc GetQuotes(GetQuotesRequest) returns (stream GetQuotesResponse);
+
+  // Select a quote and execute trade
+  rpc ExecuteTrade(ExecuteTradeRequest) returns (ExecuteTradeResponse);
+
+  // Cancel an RFQ
+  rpc CancelRfq(CancelRfqRequest) returns (CancelRfqResponse);
+
+  // Stream RFQ status updates
+  rpc StreamRfqStatus(StreamRfqStatusRequest) returns (stream StreamRfqStatusResponse);
+}
+
+// RFQ representation
+message Rfq {
+  UUID id = 1;
+  string client_id = 2;
+  Instrument instrument = 3;
+  OrderSide side = 4;
+  Decimal quantity = 5;
+  RfqState state = 6;
+  Timestamp expires_at = 7;
+  repeated Quote quotes = 8;
+  UUID selected_quote_id = 9;
+  Timestamp created_at = 10;
+  Timestamp updated_at = 11;
+}
+
+// Create RFQ Request
+message CreateRfqRequest {
+  string client_id = 1;
+  Instrument instrument = 2;
+  OrderSide side = 3;
+  Decimal quantity = 4;
+  int64 timeout_seconds = 5; // How long the RFQ should be valid
+}
+
+// Create RFQ Response
+message CreateRfqResponse {
+  Rfq rfq = 1;
+}
+
+// Get RFQ Request
+message GetRfqRequest {
+  UUID rfq_id = 1;
+}
+
+// Get RFQ Response
+message GetRfqResponse {
+  Rfq rfq = 1;
+}
+
+// Get Quotes Request
+message GetQuotesRequest {
+  UUID rfq_id = 1;
+}
+
+// Get Quotes Response (streamed)
+message GetQuotesResponse {
+  Quote quote = 1;
+  bool is_final = 2; // True when quote collection is complete
+}
+
+// Execute Trade Request
+message ExecuteTradeRequest {
+  UUID rfq_id = 1;
+  UUID quote_id = 2;
+}
+
+// Execute Trade Response
+message ExecuteTradeResponse {
+  Trade trade = 1;
+}
+
+// Cancel RFQ Request
+message CancelRfqRequest {
+  UUID rfq_id = 1;
+  string reason = 2;
+}
+
+// Cancel RFQ Response
+message CancelRfqResponse {
+  Rfq rfq = 1;
+}
+
+// Stream RFQ Status Request
+message StreamRfqStatusRequest {
+  UUID rfq_id = 1;
+}
+
+// Stream RFQ Status Response
+message StreamRfqStatusResponse {
+  UUID rfq_id = 1;
+  RfqState previous_state = 2;
+  RfqState current_state = 3;
+  string message = 4;
+  Timestamp timestamp = 5;
+}

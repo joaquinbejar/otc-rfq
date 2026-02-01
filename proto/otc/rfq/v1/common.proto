@@ -1,0 +1,103 @@
+syntax = "proto3";
+
+package otc.rfq.v1;
+
+option java_multiple_files = true;
+option java_package = "com.otc.rfq.v1";
+
+// UUID represented as a string
+message UUID {
+  string value = 1;
+}
+
+// Decimal number for precise financial calculations
+message Decimal {
+  string value = 1; // String representation to preserve precision
+}
+
+// Timestamp in RFC 3339 format
+message Timestamp {
+  int64 seconds = 1;
+  int32 nanos = 2;
+}
+
+// Order side
+enum OrderSide {
+  ORDER_SIDE_UNSPECIFIED = 0;
+  ORDER_SIDE_BUY = 1;
+  ORDER_SIDE_SELL = 2;
+}
+
+// RFQ state
+enum RfqState {
+  RFQ_STATE_UNSPECIFIED = 0;
+  RFQ_STATE_CREATED = 1;
+  RFQ_STATE_QUOTE_REQUESTING = 2;
+  RFQ_STATE_QUOTES_RECEIVED = 3;
+  RFQ_STATE_CLIENT_SELECTING = 4;
+  RFQ_STATE_EXECUTING = 5;
+  RFQ_STATE_EXECUTED = 6;
+  RFQ_STATE_FAILED = 7;
+  RFQ_STATE_CANCELLED = 8;
+  RFQ_STATE_EXPIRED = 9;
+}
+
+// Venue type
+enum VenueType {
+  VENUE_TYPE_UNSPECIFIED = 0;
+  VENUE_TYPE_INTERNAL_MM = 1;
+  VENUE_TYPE_EXTERNAL_MM = 2;
+  VENUE_TYPE_DEX_AGGREGATOR = 3;
+  VENUE_TYPE_PROTOCOL = 4;
+  VENUE_TYPE_RFQ_PROTOCOL = 5;
+}
+
+// Asset class
+enum AssetClass {
+  ASSET_CLASS_UNSPECIFIED = 0;
+  ASSET_CLASS_CRYPTO_SPOT = 1;
+  ASSET_CLASS_CRYPTO_DERIVS = 2;
+  ASSET_CLASS_STOCK = 3;
+  ASSET_CLASS_FOREX = 4;
+  ASSET_CLASS_COMMODITY = 5;
+}
+
+// Trading instrument
+message Instrument {
+  string symbol = 1;
+  AssetClass asset_class = 2;
+  string base_asset = 3;
+  string quote_asset = 4;
+}
+
+// Quote from a venue
+message Quote {
+  UUID id = 1;
+  UUID rfq_id = 2;
+  string venue_id = 3;
+  VenueType venue_type = 4;
+  Decimal price = 5;
+  Decimal quantity = 6;
+  Decimal commission = 7;
+  Timestamp valid_until = 8;
+  Timestamp created_at = 9;
+}
+
+// Executed trade
+message Trade {
+  UUID id = 1;
+  UUID rfq_id = 2;
+  UUID quote_id = 3;
+  string venue_id = 4;
+  Decimal price = 5;
+  Decimal quantity = 6;
+  string venue_execution_ref = 7;
+  Timestamp created_at = 8;
+}
+
+// Error details
+message ErrorDetails {
+  int32 code = 1;
+  string message = 2;
+  map<string, string> metadata = 3;
+}

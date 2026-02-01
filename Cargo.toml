@@ -1,0 +1,115 @@
+[package]
+name = "otc-rfq"
+version = "0.1.0"
+edition = "2021"
+authors = ["Joaquin Bejar <jb@taunais.com>"]
+description = "High-performance OTC Request-for-Quote engine supporting DeFi protocols and TradFi venues via FIX 4.4"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/joaquinbejar/otc-rfq.git"
+keywords = ["otc", "rfq", "trading", "defi", "fix"]
+categories = ["finance", "cryptography::cryptocurrencies"]
+
+[workspace]
+members = ["."]
+resolver = "2"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.44", features = ["full", "tracing"] }
+
+# Web frameworks
+axum = { version = "0.8", features = ["ws", "macros"] }
+axum-extra = { version = "0.10", features = ["typed-header"] }
+tonic = { version = "0.12", features = ["tls"] }
+tower = { version = "0.5", features = ["full"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+prost = "0.13"
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "uuid", "chrono", "rust_decimal"] }
+
+# Caching
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+# Logging and tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Types
+uuid = { version = "1.16", features = ["v4", "serde"] }
+rust_decimal = { version = "1.37", features = ["serde", "serde-with-str"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Crypto and blockchain
+ethers = { version = "2.0", features = ["rustls"] }
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+
+# Authentication
+jsonwebtoken = "9.3"
+
+# Configuration
+config = "0.15"
+dotenvy = "0.15"
+
+# Utilities
+async-trait = "0.1"
+futures = "0.3"
+parking_lot = "0.12"
+dashmap = "6.1"
+bytes = "1.10"
+
+# IronFix for FIX protocol (optional - enable when available)
+# ironfix = { git = "https://github.com/joaquinbejar/IronFix", branch = "main" }
+
+# IronSBE for binary encoding (optional - enable when available)
+# ironsbe = { git = "https://github.com/joaquinbejar/IronSBE", branch = "main" }
+
+[build-dependencies]
+tonic-build = "0.12"
+prost-build = "0.13"
+# ironsbe-codegen = { git = "https://github.com/joaquinbejar/IronSBE", branch = "main" }
+
+[dev-dependencies]
+tokio-test = "0.4"
+wiremock = "0.6"
+proptest = "1.6"
+testcontainers = "0.23"
+criterion = { version = "0.5", features = ["async_tokio"] }
+
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "warn"
+needless_collect = "warn"
+unnecessary_to_owned = "warn"
+clone_on_ref_ptr = "warn"
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+
+[profile.release]
+overflow-checks = true
+lto = "thin"
+codegen-units = 1
+
+[profile.dev]
+overflow-checks = true
+
+[[bench]]
+name = "quote_aggregation"
+harness = false
