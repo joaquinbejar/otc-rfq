@@ -16,6 +16,80 @@ resolver = "2"
 
 [dependencies]
 # Async runtime
+tokio = { workspace = true }
+
+# Web frameworks
+axum = { workspace = true }
+axum-extra = { workspace = true }
+tonic = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+prost = { workspace = true }
+
+# Database
+sqlx = { workspace = true }
+
+# Caching
+redis = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Logging and tracing
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Types
+uuid = { workspace = true }
+rust_decimal = { workspace = true }
+chrono = { workspace = true }
+
+# Crypto and blockchain
+ethers = { workspace = true }
+
+# HTTP client
+reqwest = { workspace = true }
+
+# Authentication
+jsonwebtoken = { workspace = true }
+
+# Configuration
+config = { workspace = true }
+dotenvy = { workspace = true }
+
+# Utilities
+async-trait = { workspace = true }
+futures = { workspace = true }
+parking_lot = { workspace = true }
+dashmap = { workspace = true }
+bytes = { workspace = true }
+
+# IronFix for FIX protocol (optional - enable when available)
+# ironfix = { workspace = true }
+
+# IronSBE for binary encoding (optional - enable when available)
+# ironsbe = { workspace = true }
+
+[build-dependencies]
+tonic-build = { workspace = true }
+prost-build = { workspace = true }
+# ironsbe-codegen = { workspace = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }
+wiremock = { workspace = true }
+proptest = { workspace = true }
+testcontainers = { workspace = true }
+criterion = { workspace = true }
+serde_json = { workspace = true }
+
+[workspace.dependencies]
+# Async runtime
 tokio = { version = "1.44", features = ["full", "tracing"] }
 
 # Web frameworks
@@ -69,23 +143,23 @@ parking_lot = "0.12"
 dashmap = "6.1"
 bytes = "1.10"
 
-# IronFix for FIX protocol (optional - enable when available)
-# ironfix = { git = "https://github.com/joaquinbejar/IronFix", branch = "main" }
-
-# IronSBE for binary encoding (optional - enable when available)
-# ironsbe = { git = "https://github.com/joaquinbejar/IronSBE", branch = "main" }
-
-[build-dependencies]
+# Build dependencies
 tonic-build = "0.12"
 prost-build = "0.13"
-# ironsbe-codegen = { git = "https://github.com/joaquinbejar/IronSBE", branch = "main" }
 
-[dev-dependencies]
+# Dev dependencies
 tokio-test = "0.4"
 wiremock = "0.6"
 proptest = "1.6"
 testcontainers = "0.23"
 criterion = { version = "0.5", features = ["async_tokio"] }
+
+# IronFix for FIX protocol (optional - enable when available)
+# ironfix = { git = "https://github.com/joaquinbejar/IronFix", branch = "main" }
+
+# IronSBE for binary encoding (optional - enable when available)
+# ironsbe = { git = "https://github.com/joaquinbejar/IronSBE", branch = "main" }
+# ironsbe-codegen = { git = "https://github.com/joaquinbejar/IronSBE", branch = "main" }
 
 [lints.rust]
 unsafe_code = "deny"
