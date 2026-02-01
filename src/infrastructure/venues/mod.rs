@@ -10,6 +10,8 @@
 //! - [`ExecutionResult`]: Result of a trade execution
 //! - [`VenueHealth`]: Health information for a venue
 //! - [`VenueHealthStatus`]: Health status enum
+//! - [`VenueRegistry`]: Registry for managing venue adapters
+//! - [`VenueConfig`]: Configuration for registered venues
 //!
 //! ## Implementations
 //!
@@ -28,4 +30,5 @@ pub mod rfq_protocols;
 pub mod traits;
 
 pub use error::{VenueError, VenueResult};
+pub use registry::{VenueConfig, VenueRegistry};
 pub use traits::{ExecutionResult, VenueAdapter, VenueHealth, VenueHealthStatus};
