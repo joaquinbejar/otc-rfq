@@ -68,6 +68,7 @@ futures = { workspace = true }
 parking_lot = { workspace = true }
 dashmap = { workspace = true }
 bytes = { workspace = true }
+toml = "0.9.11"
 
 # IronFix for FIX protocol (optional - enable when available)
 # ironfix = { workspace = true }

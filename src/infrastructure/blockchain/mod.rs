@@ -9,6 +9,8 @@
 //! - [`GasPrice`]: Gas pricing (legacy and EIP-1559)
 //! - [`GasEstimator`]: Gas estimation with buffer
 //! - [`ChainId`]: Supported blockchain networks
+//! - [`ChainConfig`]: Chain-specific configuration
+//! - [`TokenRegistry`]: Token address mapping across chains
 //!
 //! ## Supported Chains
 //!
@@ -27,5 +29,12 @@ pub mod tokens;
 pub use client::{
     BlockchainClient, BlockchainError, BlockchainResult, ChainId, TxHash, TxPriority, TxReceipt,
 };
+pub use config::{
+    parse_chains_config, substitute_env_vars, ChainConfig, ChainConfigBuilder, ChainsConfig,
+    ConfigError, ConfigResult, GasPriceStrategy,
+};
 pub use ethereum::EthereumClient;
 pub use gas::{FeeHistory, GasEstimator, GasPrice};
+pub use tokens::{
+    is_valid_address, normalize_address, TokenError, TokenInfo, TokenRegistry, TokenResult,
+};
