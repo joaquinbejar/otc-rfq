@@ -25,11 +25,12 @@ pub use dto::{CreateRfqRequest, CreateRfqResponse};
 pub use error::{ApplicationError, ApplicationResult};
 pub use services::{
     AggregationConfig, AggregationError, AggregationResult, AmlProvider, AmlResult,
-    BestPriceStrategy, ComplianceCheckResult, ComplianceConfig, ComplianceFlag, ComplianceFlagType,
-    ComplianceServiceImpl, ComplianceSeverity, CompositeStrategy, CompositeStrategyBuilder,
-    CostConfig, KycProvider, KycStatus, LimitsProvider, LimitsResult, LowestCostStrategy,
-    LowestSlippageStrategy, QuoteAggregationEngine, RankedQuote, RankingStrategy,
-    SanctionsProvider, SanctionsResult, WeightedScoreStrategy,
+    BestPriceStrategy, CircuitBreaker, CircuitBreakerConfig, CircuitBreakerError,
+    CircuitBreakerResult, CircuitState, ComplianceCheckResult, ComplianceConfig, ComplianceFlag,
+    ComplianceFlagType, ComplianceServiceImpl, ComplianceSeverity, CompositeStrategy,
+    CompositeStrategyBuilder, CostConfig, KycProvider, KycStatus, LimitsProvider, LimitsResult,
+    LowestCostStrategy, LowestSlippageStrategy, QuoteAggregationEngine, RankedQuote,
+    RankingStrategy, SanctionsProvider, SanctionsResult, WeightedScoreStrategy,
 };
 pub use use_cases::{
     ClientRepository, CollectQuotesConfig, CollectQuotesResponse, CollectQuotesUseCase,
