@@ -9,6 +9,9 @@ pub mod collect_quotes;
 pub mod create_rfq;
 pub mod execute_trade;
 
+#[cfg(test)]
+mod tests;
+
 pub use collect_quotes::{
     CollectQuotesConfig, CollectQuotesResponse, CollectQuotesUseCase, QuoteEventPublisher,
     VenueQuoteResult, VenueRegistry,
