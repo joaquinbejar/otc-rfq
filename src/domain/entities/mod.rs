@@ -19,6 +19,9 @@ pub mod rfq;
 pub mod trade;
 pub mod venue;
 
+#[cfg(test)]
+mod tests;
+
 pub use counterparty::{
     Counterparty, CounterpartyLimits, CounterpartyType, InvalidCounterpartyTypeError,
     InvalidKycStatusError, KycStatus, WalletAddress,
