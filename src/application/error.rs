@@ -47,6 +47,30 @@ pub enum ApplicationError {
     /// Internal error.
     #[error("internal error: {0}")]
     Internal(String),
+
+    /// RFQ not found.
+    #[error("rfq not found: {0}")]
+    RfqNotFound(String),
+
+    /// Quote not found.
+    #[error("quote not found: {0}")]
+    QuoteNotFound(String),
+
+    /// Quote expired.
+    #[error("quote expired: {0}")]
+    QuoteExpired(String),
+
+    /// Invalid state for operation.
+    #[error("invalid state: {0}")]
+    InvalidState(String),
+
+    /// Venue not available.
+    #[error("venue not available: {0}")]
+    VenueNotAvailable(String),
+
+    /// Trade execution failed.
+    #[error("execution failed: {0}")]
+    ExecutionFailed(String),
 }
 
 impl ApplicationError {

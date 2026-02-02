@@ -30,6 +30,7 @@ pub use services::{
 };
 pub use use_cases::{
     ClientRepository, CollectQuotesConfig, CollectQuotesResponse, CollectQuotesUseCase,
-    ComplianceService, CreateRfqUseCase, EventPublisher, InstrumentRegistry, QuoteEventPublisher,
-    RfqRepository, VenueQuoteResult, VenueRegistry,
+    ComplianceService, CreateRfqUseCase, EventPublisher, ExecuteTradeRequest, ExecuteTradeResponse,
+    ExecuteTradeUseCase, InstrumentRegistry, QuoteEventPublisher, RfqRepository,
+    TradeEventPublisher, TradeRepository, VenueQuoteResult, VenueRegistry,
 };

@@ -17,3 +17,7 @@ pub use create_rfq::{
     ClientRepository, ComplianceService, CreateRfqUseCase, EventPublisher, InstrumentRegistry,
     RfqRepository,
 };
+pub use execute_trade::{
+    ExecuteTradeRequest, ExecuteTradeResponse, ExecuteTradeUseCase, TradeEventPublisher,
+    TradeRepository,
+};
