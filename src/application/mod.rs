@@ -7,7 +7,7 @@
 //!
 //! ## Use Cases
 //!
-//! - `CreateRfqUseCase`: Create a new RFQ request
+//! - [`CreateRfqUseCase`]: Create a new RFQ request
 //! - `CollectQuotesUseCase`: Gather quotes from venues
 //! - `ExecuteTradeUseCase`: Execute a trade against a quote
 //!
@@ -20,3 +20,10 @@ pub mod dto;
 pub mod error;
 pub mod services;
 pub mod use_cases;
+
+pub use dto::{CreateRfqRequest, CreateRfqResponse};
+pub use error::{ApplicationError, ApplicationResult};
+pub use use_cases::{
+    ClientRepository, ComplianceService, CreateRfqUseCase, EventPublisher, InstrumentRegistry,
+    RfqRepository,
+};
