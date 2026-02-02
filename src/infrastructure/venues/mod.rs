@@ -29,6 +29,7 @@ pub mod dex;
 pub mod error;
 pub mod fix_adapter;
 pub mod fix_config;
+pub mod fix_simulator;
 pub mod internal_mm;
 pub mod registry;
 pub mod rfq_protocols;
