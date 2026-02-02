@@ -34,6 +34,9 @@ pub mod registry;
 pub mod rfq_protocols;
 pub mod traits;
 
+#[cfg(test)]
+mod tests;
+
 pub use error::{VenueError, VenueResult};
 pub use fix_adapter::{FixMMAdapter, SessionState};
 pub use fix_config::{FixMMConfig, FixSessionConfig, FixVersion, LogonCredentials, TlsConfig};
