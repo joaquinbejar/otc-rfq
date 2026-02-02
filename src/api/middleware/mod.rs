@@ -30,3 +30,8 @@ pub use auth::{
     auth_middleware, create_auth_config, create_jwt, require_permission, require_role,
     validate_jwt, AuthConfig, AuthError, AuthenticatedUser, Claims, OptionalUser, TokenQuery,
 };
+
+pub use rate_limit::{
+    create_rate_limit_state, rate_limit_middleware, ClientTier, InMemoryRateLimiter,
+    RateLimitConfig, RateLimitError, RateLimitInfo, RateLimitState, RateLimitType, RateLimiter,
+};
