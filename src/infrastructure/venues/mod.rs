@@ -12,6 +12,8 @@
 //! - [`VenueHealthStatus`]: Health status enum
 //! - [`VenueRegistry`]: Registry for managing venue adapters
 //! - [`VenueConfig`]: Configuration for registered venues
+//! - [`InternalMMAdapter`]: Internal market maker adapter
+//! - [`InternalMMConfig`]: Configuration for internal market maker
 //!
 //! ## Implementations
 //!
@@ -30,5 +32,6 @@ pub mod rfq_protocols;
 pub mod traits;
 
 pub use error::{VenueError, VenueResult};
+pub use internal_mm::{InternalMMAdapter, InternalMMConfig};
 pub use registry::{VenueConfig, VenueRegistry};
 pub use traits::{ExecutionResult, VenueAdapter, VenueHealth, VenueHealthStatus};
