@@ -23,6 +23,7 @@
 pub mod blockchain;
 pub mod http_clients;
 pub mod persistence;
+pub mod sbe;
 pub mod venues;
 
 pub use persistence as repos;
