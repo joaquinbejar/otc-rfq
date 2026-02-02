@@ -20,6 +20,8 @@
 pub mod counterparty_repository;
 pub mod event_store;
 pub mod rfq_repository;
+#[cfg(test)]
+mod tests;
 pub mod trade_repository;
 pub mod venue_repository;
 
