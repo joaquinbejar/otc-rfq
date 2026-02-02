@@ -35,3 +35,14 @@ pub use rate_limit::{
     create_rate_limit_state, rate_limit_middleware, ClientTier, InMemoryRateLimiter,
     RateLimitConfig, RateLimitError, RateLimitInfo, RateLimitState, RateLimitType, RateLimiter,
 };
+
+pub use logging::{
+    create_logging_state, create_logging_state_with_config, logging_middleware, redact_headers,
+    redact_sensitive, LogEntry, LoggingConfig, LoggingState, RequestId,
+};
+
+pub use tracing_mw::{
+    create_tracing_state, create_tracing_state_with_config, extract_trace_context,
+    generate_span_id, generate_trace_id, headers, inject_trace_context, tracing_middleware,
+    TraceContext, TracingConfig, TracingState,
+};
