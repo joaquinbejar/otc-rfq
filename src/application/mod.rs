@@ -24,6 +24,7 @@ pub mod use_cases;
 pub use dto::{CreateRfqRequest, CreateRfqResponse};
 pub use error::{ApplicationError, ApplicationResult};
 pub use use_cases::{
-    ClientRepository, ComplianceService, CreateRfqUseCase, EventPublisher, InstrumentRegistry,
-    RfqRepository,
+    ClientRepository, CollectQuotesConfig, CollectQuotesResponse, CollectQuotesUseCase,
+    ComplianceService, CreateRfqUseCase, EventPublisher, InstrumentRegistry, QuoteEventPublisher,
+    RfqRepository, VenueQuoteResult, VenueRegistry,
 };
