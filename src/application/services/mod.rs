@@ -12,6 +12,11 @@ pub mod quote_aggregation;
 pub mod ranking_strategy;
 pub mod retry;
 
+pub use compliance::{
+    AmlProvider, AmlResult, ComplianceCheckResult, ComplianceConfig, ComplianceFlag,
+    ComplianceFlagType, ComplianceServiceImpl, ComplianceSeverity, KycProvider, KycStatus,
+    LimitsProvider, LimitsResult, SanctionsProvider, SanctionsResult,
+};
 pub use quote_aggregation::{
     AggregationConfig, AggregationError, AggregationResult, QuoteAggregationEngine,
 };
