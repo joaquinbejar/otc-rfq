@@ -1,6 +1,6 @@
 //! # FIX Protocol Simulator
 //!
-//! A FIX protocol simulator for testing the FIX MM adapter.
+//! A FIX protocol simulator for testing the FIX MM adapter using IronFix.
 //!
 //! This module provides a configurable FIX acceptor that can simulate
 //! market maker behavior for integration testing.
@@ -12,6 +12,13 @@
 //! - ExecutionReport generation for NewOrderSingle
 //! - Error injection (rejects, timeouts, sequence gaps)
 //! - Message recording for replay testing
+//! - IronFix encoding for wire-ready messages with valid checksums
+//! - Session-level messages (Logon, Heartbeat, Logout)
+//!
+//! # IronFix Integration
+//!
+//! The simulator uses `ironfix_tagvalue::Encoder` to produce properly formatted
+//! FIX messages with BeginString, BodyLength, and Checksum fields.
 //!
 //! # Examples
 //!
@@ -25,6 +32,9 @@
 //!
 //! let simulator = FixSimulator::new(config);
 //! simulator.start().await?;
+//!
+//! // Get wire-ready encoded message
+//! let encoded = simulator.encode_logon();
 //! ```
 
 use std::collections::VecDeque;
@@ -32,6 +42,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
+use bytes::BytesMut;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
@@ -39,6 +50,44 @@ use crate::domain::value_objects::timestamp::Timestamp;
 use crate::infrastructure::venues::fix_adapter::{
     exec_type, msg_type, ord_status, ord_type, side, tags, time_in_force,
 };
+
+/// FIX message type constants for session-level messages.
+pub mod session_msg_type {
+    /// Logon message type.
+    pub const LOGON: &str = "A";
+    /// Logout message type.
+    pub const LOGOUT: &str = "5";
+    /// Heartbeat message type.
+    pub const HEARTBEAT: &str = "0";
+    /// TestRequest message type.
+    pub const TEST_REQUEST: &str = "1";
+    /// ResendRequest message type.
+    pub const RESEND_REQUEST: &str = "2";
+    /// Reject message type.
+    pub const REJECT: &str = "3";
+    /// SequenceReset message type.
+    pub const SEQUENCE_RESET: &str = "4";
+}
+
+/// FIX tag constants for session-level fields.
+pub mod session_tags {
+    /// EncryptMethod (98).
+    pub const ENCRYPT_METHOD: u32 = 98;
+    /// HeartBtInt (108).
+    pub const HEART_BT_INT: u32 = 108;
+    /// ResetSeqNumFlag (141).
+    pub const RESET_SEQ_NUM_FLAG: u32 = 141;
+    /// TestReqID (112).
+    pub const TEST_REQ_ID: u32 = 112;
+    /// BeginSeqNo (7).
+    pub const BEGIN_SEQ_NO: u32 = 7;
+    /// EndSeqNo (16).
+    pub const END_SEQ_NO: u32 = 16;
+    /// GapFillFlag (123).
+    pub const GAP_FILL_FLAG: u32 = 123;
+    /// NewSeqNo (36).
+    pub const NEW_SEQ_NO: u32 = 36;
+}
 
 // ============================================================================
 // Simulator Configuration
@@ -786,6 +835,225 @@ impl FixSimulator {
             (tags::TRANSACT_TIME, Timestamp::now().to_fix_format()),
         ]
     }
+
+    // ========================================================================
+    // IronFix Encoding Methods
+    // ========================================================================
+
+    /// Encodes a Logon message using IronFix.
+    ///
+    /// Returns a wire-ready FIX message with proper header and checksum.
+    #[must_use]
+    pub fn encode_logon(&self) -> BytesMut {
+        let mut encoder = ironfix_tagvalue::Encoder::new("FIX.4.4");
+
+        // MsgType = A (Logon)
+        encoder.put_str(35, session_msg_type::LOGON);
+
+        // Session fields
+        encoder.put_str(49, self.config.sender_comp_id());
+        encoder.put_str(56, self.config.target_comp_id());
+        encoder.put_uint(34, self.next_outbound_seq_num());
+        encoder.put_str(52, &Timestamp::now().to_fix_format());
+
+        // Logon-specific fields
+        encoder.put_uint(session_tags::ENCRYPT_METHOD, 0); // No encryption
+        encoder.put_uint(session_tags::HEART_BT_INT, 30); // 30 second heartbeat
+        encoder.put_str(session_tags::RESET_SEQ_NUM_FLAG, "Y");
+
+        encoder.finish()
+    }
+
+    /// Encodes a Logout message using IronFix.
+    ///
+    /// Returns a wire-ready FIX message with proper header and checksum.
+    #[must_use]
+    pub fn encode_logout(&self, text: Option<&str>) -> BytesMut {
+        let mut encoder = ironfix_tagvalue::Encoder::new("FIX.4.4");
+
+        // MsgType = 5 (Logout)
+        encoder.put_str(35, session_msg_type::LOGOUT);
+
+        // Session fields
+        encoder.put_str(49, self.config.sender_comp_id());
+        encoder.put_str(56, self.config.target_comp_id());
+        encoder.put_uint(34, self.next_outbound_seq_num());
+        encoder.put_str(52, &Timestamp::now().to_fix_format());
+
+        // Optional text
+        if let Some(t) = text {
+            encoder.put_str(tags::TEXT, t);
+        }
+
+        encoder.finish()
+    }
+
+    /// Encodes a Heartbeat message using IronFix.
+    ///
+    /// Returns a wire-ready FIX message with proper header and checksum.
+    #[must_use]
+    pub fn encode_heartbeat(&self, test_req_id: Option<&str>) -> BytesMut {
+        let mut encoder = ironfix_tagvalue::Encoder::new("FIX.4.4");
+
+        // MsgType = 0 (Heartbeat)
+        encoder.put_str(35, session_msg_type::HEARTBEAT);
+
+        // Session fields
+        encoder.put_str(49, self.config.sender_comp_id());
+        encoder.put_str(56, self.config.target_comp_id());
+        encoder.put_uint(34, self.next_outbound_seq_num());
+        encoder.put_str(52, &Timestamp::now().to_fix_format());
+
+        // TestReqID if responding to TestRequest
+        if let Some(id) = test_req_id {
+            encoder.put_str(session_tags::TEST_REQ_ID, id);
+        }
+
+        encoder.finish()
+    }
+
+    /// Encodes a TestRequest message using IronFix.
+    ///
+    /// Returns a wire-ready FIX message with proper header and checksum.
+    #[must_use]
+    pub fn encode_test_request(&self, test_req_id: &str) -> BytesMut {
+        let mut encoder = ironfix_tagvalue::Encoder::new("FIX.4.4");
+
+        // MsgType = 1 (TestRequest)
+        encoder.put_str(35, session_msg_type::TEST_REQUEST);
+
+        // Session fields
+        encoder.put_str(49, self.config.sender_comp_id());
+        encoder.put_str(56, self.config.target_comp_id());
+        encoder.put_uint(34, self.next_outbound_seq_num());
+        encoder.put_str(52, &Timestamp::now().to_fix_format());
+
+        // TestReqID
+        encoder.put_str(session_tags::TEST_REQ_ID, test_req_id);
+
+        encoder.finish()
+    }
+
+    /// Encodes a Quote message using IronFix.
+    ///
+    /// Returns a wire-ready FIX message with proper header and checksum.
+    #[must_use]
+    pub fn encode_quote(
+        &self,
+        quote_req_id: &str,
+        quote_id: &str,
+        symbol: &str,
+        req_side: &str,
+        order_qty: &str,
+    ) -> BytesMut {
+        let mut encoder = ironfix_tagvalue::Encoder::new("FIX.4.4");
+
+        // MsgType = S (Quote)
+        encoder.put_str(35, msg_type::QUOTE);
+
+        // Session fields
+        encoder.put_str(49, self.config.sender_comp_id());
+        encoder.put_str(56, self.config.target_comp_id());
+        encoder.put_uint(34, self.next_outbound_seq_num());
+        encoder.put_str(52, &Timestamp::now().to_fix_format());
+
+        // Quote fields
+        encoder.put_str(tags::QUOTE_REQ_ID, quote_req_id);
+        encoder.put_str(tags::QUOTE_ID, quote_id);
+        encoder.put_str(tags::SYMBOL, symbol);
+        encoder.put_str(tags::SIDE, req_side);
+        encoder.put_str(tags::BID_PX, &self.config.bid_price.to_string());
+        encoder.put_str(tags::OFFER_PX, &self.config.ask_price.to_string());
+        encoder.put_str(tags::BID_SIZE, &self.config.bid_size.to_string());
+        encoder.put_str(tags::OFFER_SIZE, &self.config.ask_size.to_string());
+        encoder.put_str(tags::ORDER_QTY, order_qty);
+
+        let valid_until = Timestamp::now().add_secs(self.config.quote_validity_secs as i64);
+        encoder.put_str(tags::VALID_UNTIL_TIME, &valid_until.to_fix_format());
+        encoder.put_str(tags::TRANSACT_TIME, &Timestamp::now().to_fix_format());
+
+        encoder.finish()
+    }
+
+    /// Encodes an ExecutionReport (Fill) message using IronFix.
+    ///
+    /// Returns a wire-ready FIX message with proper header and checksum.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn encode_execution_report_fill(
+        &self,
+        cl_ord_id: &str,
+        quote_id: &str,
+        exec_id: &str,
+        symbol: &str,
+        order_side: &str,
+        order_qty: &str,
+        price: &str,
+    ) -> BytesMut {
+        let mut encoder = ironfix_tagvalue::Encoder::new("FIX.4.4");
+
+        // MsgType = 8 (ExecutionReport)
+        encoder.put_str(35, msg_type::EXECUTION_REPORT);
+
+        // Session fields
+        encoder.put_str(49, self.config.sender_comp_id());
+        encoder.put_str(56, self.config.target_comp_id());
+        encoder.put_uint(34, self.next_outbound_seq_num());
+        encoder.put_str(52, &Timestamp::now().to_fix_format());
+
+        // Execution report fields
+        encoder.put_str(tags::CL_ORD_ID, cl_ord_id);
+        encoder.put_str(tags::QUOTE_ID, quote_id);
+        encoder.put_str(tags::EXEC_ID, exec_id);
+        encoder.put_str(tags::EXEC_TYPE, exec_type::FILL);
+        encoder.put_str(tags::ORD_STATUS, ord_status::FILLED);
+        encoder.put_str(tags::SYMBOL, symbol);
+        encoder.put_str(tags::SIDE, order_side);
+        encoder.put_str(tags::ORDER_QTY, order_qty);
+        encoder.put_str(tags::LAST_PX, price);
+        encoder.put_str(tags::LAST_QTY, order_qty);
+        encoder.put_str(tags::TRANSACT_TIME, &Timestamp::now().to_fix_format());
+
+        encoder.finish()
+    }
+
+    /// Encodes an ExecutionReport (Reject) message using IronFix.
+    ///
+    /// Returns a wire-ready FIX message with proper header and checksum.
+    #[must_use]
+    pub fn encode_execution_report_reject(
+        &self,
+        cl_ord_id: &str,
+        exec_id: &str,
+        symbol: &str,
+        order_side: &str,
+        order_qty: &str,
+        reject_reason: &str,
+    ) -> BytesMut {
+        let mut encoder = ironfix_tagvalue::Encoder::new("FIX.4.4");
+
+        // MsgType = 8 (ExecutionReport)
+        encoder.put_str(35, msg_type::EXECUTION_REPORT);
+
+        // Session fields
+        encoder.put_str(49, self.config.sender_comp_id());
+        encoder.put_str(56, self.config.target_comp_id());
+        encoder.put_uint(34, self.next_outbound_seq_num());
+        encoder.put_str(52, &Timestamp::now().to_fix_format());
+
+        // Execution report fields
+        encoder.put_str(tags::CL_ORD_ID, cl_ord_id);
+        encoder.put_str(tags::EXEC_ID, exec_id);
+        encoder.put_str(tags::EXEC_TYPE, exec_type::REJECTED);
+        encoder.put_str(tags::ORD_STATUS, ord_status::REJECTED);
+        encoder.put_str(tags::SYMBOL, symbol);
+        encoder.put_str(tags::SIDE, order_side);
+        encoder.put_str(tags::ORDER_QTY, order_qty);
+        encoder.put_str(tags::TEXT, reject_reason);
+        encoder.put_str(tags::TRANSACT_TIME, &Timestamp::now().to_fix_format());
+
+        encoder.finish()
+    }
 }
 
 impl std::fmt::Debug for FixSimulator {
@@ -1192,6 +1460,160 @@ mod tests {
             let elapsed = start.elapsed();
 
             assert!(elapsed >= Duration::from_millis(100));
+        }
+    }
+
+    mod ironfix_encoding {
+        use super::*;
+
+        #[test]
+        fn encode_logon_has_valid_structure() {
+            let sim = default_simulator();
+            let encoded = sim.encode_logon();
+
+            // Convert to string for inspection
+            let msg = String::from_utf8_lossy(&encoded);
+
+            // Verify message structure
+            assert!(msg.starts_with("8=FIX.4.4\x01"));
+            assert!(msg.contains("35=A\x01")); // MsgType = Logon
+            assert!(msg.contains("49=SIMULATOR\x01")); // SenderCompID
+            assert!(msg.contains("56=CLIENT\x01")); // TargetCompID
+            assert!(msg.contains("98=0\x01")); // EncryptMethod
+            assert!(msg.contains("108=30\x01")); // HeartBtInt
+            assert!(msg.contains("10=")); // Checksum present
+        }
+
+        #[test]
+        fn encode_logout_has_valid_structure() {
+            let sim = default_simulator();
+            let encoded = sim.encode_logout(Some("Session ended"));
+
+            let msg = String::from_utf8_lossy(&encoded);
+
+            assert!(msg.starts_with("8=FIX.4.4\x01"));
+            assert!(msg.contains("35=5\x01")); // MsgType = Logout
+            assert!(msg.contains("58=Session ended\x01")); // Text
+            assert!(msg.contains("10=")); // Checksum present
+        }
+
+        #[test]
+        fn encode_heartbeat_has_valid_structure() {
+            let sim = default_simulator();
+            let encoded = sim.encode_heartbeat(None);
+
+            let msg = String::from_utf8_lossy(&encoded);
+
+            assert!(msg.starts_with("8=FIX.4.4\x01"));
+            assert!(msg.contains("35=0\x01")); // MsgType = Heartbeat
+            assert!(msg.contains("10=")); // Checksum present
+        }
+
+        #[test]
+        fn encode_heartbeat_with_test_req_id() {
+            let sim = default_simulator();
+            let encoded = sim.encode_heartbeat(Some("TEST-123"));
+
+            let msg = String::from_utf8_lossy(&encoded);
+
+            assert!(msg.contains("35=0\x01")); // MsgType = Heartbeat
+            assert!(msg.contains("112=TEST-123\x01")); // TestReqID
+        }
+
+        #[test]
+        fn encode_test_request_has_valid_structure() {
+            let sim = default_simulator();
+            let encoded = sim.encode_test_request("TR-001");
+
+            let msg = String::from_utf8_lossy(&encoded);
+
+            assert!(msg.starts_with("8=FIX.4.4\x01"));
+            assert!(msg.contains("35=1\x01")); // MsgType = TestRequest
+            assert!(msg.contains("112=TR-001\x01")); // TestReqID
+            assert!(msg.contains("10=")); // Checksum present
+        }
+
+        #[test]
+        fn encode_quote_has_valid_structure() {
+            let sim = default_simulator();
+            let encoded = sim.encode_quote("QR-001", "Q-001", "BTC/USD", side::BUY, "1.5");
+
+            let msg = String::from_utf8_lossy(&encoded);
+
+            assert!(msg.starts_with("8=FIX.4.4\x01"));
+            assert!(msg.contains("35=S\x01")); // MsgType = Quote
+            assert!(msg.contains("131=QR-001\x01")); // QuoteReqID
+            assert!(msg.contains("117=Q-001\x01")); // QuoteID
+            assert!(msg.contains("55=BTC/USD\x01")); // Symbol
+            assert!(msg.contains("132=49950\x01")); // BidPx
+            assert!(msg.contains("133=50050\x01")); // OfferPx
+            assert!(msg.contains("10=")); // Checksum present
+        }
+
+        #[test]
+        fn encode_execution_report_fill_has_valid_structure() {
+            let sim = default_simulator();
+            let encoded = sim.encode_execution_report_fill(
+                "ORD-001",
+                "Q-001",
+                "EXEC-001",
+                "BTC/USD",
+                side::BUY,
+                "1.0",
+                "50050.0",
+            );
+
+            let msg = String::from_utf8_lossy(&encoded);
+
+            assert!(msg.starts_with("8=FIX.4.4\x01"));
+            assert!(msg.contains("35=8\x01")); // MsgType = ExecutionReport
+            assert!(msg.contains("11=ORD-001\x01")); // ClOrdID
+            assert!(msg.contains("17=EXEC-001\x01")); // ExecID
+            assert!(msg.contains("150=F\x01")); // ExecType = Fill
+            assert!(msg.contains("39=2\x01")); // OrdStatus = Filled
+            assert!(msg.contains("31=50050.0\x01")); // LastPx
+            assert!(msg.contains("10=")); // Checksum present
+        }
+
+        #[test]
+        fn encode_execution_report_reject_has_valid_structure() {
+            let sim = default_simulator();
+            let encoded = sim.encode_execution_report_reject(
+                "ORD-001",
+                "EXEC-001",
+                "BTC/USD",
+                side::BUY,
+                "1.0",
+                "Insufficient funds",
+            );
+
+            let msg = String::from_utf8_lossy(&encoded);
+
+            assert!(msg.starts_with("8=FIX.4.4\x01"));
+            assert!(msg.contains("35=8\x01")); // MsgType = ExecutionReport
+            assert!(msg.contains("150=8\x01")); // ExecType = Rejected
+            assert!(msg.contains("39=8\x01")); // OrdStatus = Rejected
+            assert!(msg.contains("58=Insufficient funds\x01")); // Text
+            assert!(msg.contains("10=")); // Checksum present
+        }
+
+        #[test]
+        fn sequence_numbers_increment() {
+            let sim = default_simulator();
+
+            // Encode multiple messages
+            let msg1 = sim.encode_heartbeat(None);
+            let msg2 = sim.encode_heartbeat(None);
+            let msg3 = sim.encode_heartbeat(None);
+
+            let s1 = String::from_utf8_lossy(&msg1);
+            let s2 = String::from_utf8_lossy(&msg2);
+            let s3 = String::from_utf8_lossy(&msg3);
+
+            // Each message should have incrementing sequence numbers
+            assert!(s1.contains("34=1\x01"));
+            assert!(s2.contains("34=2\x01"));
+            assert!(s3.contains("34=3\x01"));
         }
     }
 }
