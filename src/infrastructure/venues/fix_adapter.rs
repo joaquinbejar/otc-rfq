@@ -21,7 +21,7 @@
 //! - [`ironfix_tagvalue::Encoder`] for building FIX messages
 //! - [`ironfix_core`] types for FIX protocol primitives
 //!
-//! The [`encode_quote_request`] and [`encode_new_order_single`] methods
+//! The [`FixMMAdapter::encode_quote_request`] and [`FixMMAdapter::encode_new_order_single`] methods
 //! return properly formatted FIX messages with checksums.
 //!
 //! # Examples
