@@ -76,13 +76,24 @@ fn generate_sbe_codecs() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    // TODO: Uncomment when IronSBE codegen is available
-    // ironsbe_codegen::generate(
-    //     &schema_path,
-    //     &PathBuf::from(std::env::var("OUT_DIR")?).join("sbe_messages.rs"),
-    // )?;
+    // Generate SBE codecs using IronSBE
+    let out_dir = PathBuf::from(std::env::var("OUT_DIR")?);
+    let output_path = out_dir.join("sbe_generated.rs");
 
-    println!("cargo:warning=SBE codegen placeholder - implement when IronSBE is ready");
+    match ironsbe_codegen::generate_from_file(&schema_path) {
+        Ok(generated_code) => {
+            std::fs::write(&output_path, generated_code)?;
+            println!("cargo:warning=SBE codecs generated successfully");
+        }
+        Err(e) => {
+            // Write a placeholder module if generation fails
+            let placeholder = "// IronSBE codegen failed - using custom implementation\n";
+            std::fs::write(&output_path, placeholder)?;
+            println!("cargo:warning=SBE codegen failed: {e}, using custom implementation");
+        }
+    }
+
+    println!("cargo:rerun-if-changed=schemas/sbe/otc-rfq.xml");
 
     Ok(())
 }

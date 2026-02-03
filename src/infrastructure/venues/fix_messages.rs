@@ -1025,21 +1025,31 @@ mod tests {
                 .quantity(Decimal::from(100))
                 .build();
 
-            assert!(fields
-                .iter()
-                .any(|(t, v)| *t == tags::MSG_TYPE && v == msg_type::QUOTE_REQUEST));
-            assert!(fields
-                .iter()
-                .any(|(t, v)| *t == tags::QUOTE_REQ_ID && v == "QR-001"));
-            assert!(fields
-                .iter()
-                .any(|(t, v)| *t == tags::SYMBOL && v == "BTC/USD"));
-            assert!(fields
-                .iter()
-                .any(|(t, v)| *t == tags::SIDE && v == side_values::BUY));
-            assert!(fields
-                .iter()
-                .any(|(t, v)| *t == tags::ORDER_QTY && v == "100"));
+            assert!(
+                fields
+                    .iter()
+                    .any(|(t, v)| *t == tags::MSG_TYPE && v == msg_type::QUOTE_REQUEST)
+            );
+            assert!(
+                fields
+                    .iter()
+                    .any(|(t, v)| *t == tags::QUOTE_REQ_ID && v == "QR-001")
+            );
+            assert!(
+                fields
+                    .iter()
+                    .any(|(t, v)| *t == tags::SYMBOL && v == "BTC/USD")
+            );
+            assert!(
+                fields
+                    .iter()
+                    .any(|(t, v)| *t == tags::SIDE && v == side_values::BUY)
+            );
+            assert!(
+                fields
+                    .iter()
+                    .any(|(t, v)| *t == tags::ORDER_QTY && v == "100")
+            );
         }
 
         #[test]
@@ -1056,12 +1066,16 @@ mod tests {
                 .currency("USD")
                 .build();
 
-            assert!(fields
-                .iter()
-                .any(|(t, v)| *t == tags::ACCOUNT && v == "ACC-001"));
-            assert!(fields
-                .iter()
-                .any(|(t, v)| *t == tags::CURRENCY && v == "USD"));
+            assert!(
+                fields
+                    .iter()
+                    .any(|(t, v)| *t == tags::ACCOUNT && v == "ACC-001")
+            );
+            assert!(
+                fields
+                    .iter()
+                    .any(|(t, v)| *t == tags::CURRENCY && v == "USD")
+            );
         }
     }
 
@@ -1138,21 +1152,31 @@ mod tests {
                 .price(Decimal::from(50000))
                 .build();
 
-            assert!(fields
-                .iter()
-                .any(|(t, v)| *t == tags::MSG_TYPE && v == msg_type::NEW_ORDER_SINGLE));
-            assert!(fields
-                .iter()
-                .any(|(t, v)| *t == tags::CL_ORD_ID && v == "ORD-001"));
-            assert!(fields
-                .iter()
-                .any(|(t, v)| *t == tags::ORD_TYPE && v == ord_type_values::PREVIOUSLY_QUOTED));
-            assert!(fields
-                .iter()
-                .any(|(t, v)| *t == tags::QUOTE_ID && v == "Q-001"));
-            assert!(fields
-                .iter()
-                .any(|(t, v)| *t == tags::PRICE && v == "50000"));
+            assert!(
+                fields
+                    .iter()
+                    .any(|(t, v)| *t == tags::MSG_TYPE && v == msg_type::NEW_ORDER_SINGLE)
+            );
+            assert!(
+                fields
+                    .iter()
+                    .any(|(t, v)| *t == tags::CL_ORD_ID && v == "ORD-001")
+            );
+            assert!(
+                fields
+                    .iter()
+                    .any(|(t, v)| *t == tags::ORD_TYPE && v == ord_type_values::PREVIOUSLY_QUOTED)
+            );
+            assert!(
+                fields
+                    .iter()
+                    .any(|(t, v)| *t == tags::QUOTE_ID && v == "Q-001")
+            );
+            assert!(
+                fields
+                    .iter()
+                    .any(|(t, v)| *t == tags::PRICE && v == "50000")
+            );
         }
 
         #[test]
@@ -1165,15 +1189,21 @@ mod tests {
                 .fok()
                 .build();
 
-            assert!(fields
-                .iter()
-                .any(|(t, v)| *t == tags::ORD_TYPE && v == ord_type_values::LIMIT));
-            assert!(fields
-                .iter()
-                .any(|(t, v)| *t == tags::TIME_IN_FORCE && v == time_in_force_values::FOK));
-            assert!(fields
-                .iter()
-                .any(|(t, v)| *t == tags::SIDE && v == side_values::SELL));
+            assert!(
+                fields
+                    .iter()
+                    .any(|(t, v)| *t == tags::ORD_TYPE && v == ord_type_values::LIMIT)
+            );
+            assert!(
+                fields
+                    .iter()
+                    .any(|(t, v)| *t == tags::TIME_IN_FORCE && v == time_in_force_values::FOK)
+            );
+            assert!(
+                fields
+                    .iter()
+                    .any(|(t, v)| *t == tags::SIDE && v == side_values::SELL)
+            );
         }
     }
 
@@ -1230,21 +1260,31 @@ mod tests {
                 .offer_size(Decimal::from(10))
                 .build();
 
-            assert!(fields
-                .iter()
-                .any(|(t, v)| *t == tags::MSG_TYPE && v == msg_type::QUOTE));
-            assert!(fields
-                .iter()
-                .any(|(t, v)| *t == tags::QUOTE_REQ_ID && v == "QR-001"));
-            assert!(fields
-                .iter()
-                .any(|(t, v)| *t == tags::QUOTE_ID && v == "Q-001"));
-            assert!(fields
-                .iter()
-                .any(|(t, v)| *t == tags::BID_PX && v == "49900"));
-            assert!(fields
-                .iter()
-                .any(|(t, v)| *t == tags::OFFER_PX && v == "50100"));
+            assert!(
+                fields
+                    .iter()
+                    .any(|(t, v)| *t == tags::MSG_TYPE && v == msg_type::QUOTE)
+            );
+            assert!(
+                fields
+                    .iter()
+                    .any(|(t, v)| *t == tags::QUOTE_REQ_ID && v == "QR-001")
+            );
+            assert!(
+                fields
+                    .iter()
+                    .any(|(t, v)| *t == tags::QUOTE_ID && v == "Q-001")
+            );
+            assert!(
+                fields
+                    .iter()
+                    .any(|(t, v)| *t == tags::BID_PX && v == "49900")
+            );
+            assert!(
+                fields
+                    .iter()
+                    .any(|(t, v)| *t == tags::OFFER_PX && v == "50100")
+            );
         }
     }
 
@@ -1260,18 +1300,26 @@ mod tests {
                 .avg_px(Decimal::from(50000))
                 .build();
 
-            assert!(fields
-                .iter()
-                .any(|(t, v)| *t == tags::MSG_TYPE && v == msg_type::EXECUTION_REPORT));
-            assert!(fields
-                .iter()
-                .any(|(t, v)| *t == tags::EXEC_TYPE && v == exec_type_values::FILL));
-            assert!(fields
-                .iter()
-                .any(|(t, v)| *t == tags::ORD_STATUS && v == ord_status_values::FILLED));
-            assert!(fields
-                .iter()
-                .any(|(t, v)| *t == tags::LAST_PX && v == "50000"));
+            assert!(
+                fields
+                    .iter()
+                    .any(|(t, v)| *t == tags::MSG_TYPE && v == msg_type::EXECUTION_REPORT)
+            );
+            assert!(
+                fields
+                    .iter()
+                    .any(|(t, v)| *t == tags::EXEC_TYPE && v == exec_type_values::FILL)
+            );
+            assert!(
+                fields
+                    .iter()
+                    .any(|(t, v)| *t == tags::ORD_STATUS && v == ord_status_values::FILLED)
+            );
+            assert!(
+                fields
+                    .iter()
+                    .any(|(t, v)| *t == tags::LAST_PX && v == "50000")
+            );
         }
 
         #[test]
@@ -1280,12 +1328,16 @@ mod tests {
                 .rejected("Insufficient funds")
                 .build();
 
-            assert!(fields
-                .iter()
-                .any(|(t, v)| *t == tags::EXEC_TYPE && v == exec_type_values::REJECTED));
-            assert!(fields
-                .iter()
-                .any(|(t, v)| *t == tags::TEXT && v == "Insufficient funds"));
+            assert!(
+                fields
+                    .iter()
+                    .any(|(t, v)| *t == tags::EXEC_TYPE && v == exec_type_values::REJECTED)
+            );
+            assert!(
+                fields
+                    .iter()
+                    .any(|(t, v)| *t == tags::TEXT && v == "Insufficient funds")
+            );
         }
     }
 
