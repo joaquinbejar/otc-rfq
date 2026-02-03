@@ -1031,3 +1031,564 @@ mod integration_tests {
         );
     }
 }
+
+// ============================================================================
+// End-to-End RFQ Workflow Tests
+// ============================================================================
+
+/// Comprehensive end-to-end tests for the complete RFQ lifecycle.
+///
+/// These tests verify the full workflow from RFQ creation through settlement,
+/// including state transitions, event emission, and failure scenarios.
+#[cfg(test)]
+#[allow(clippy::indexing_slicing)]
+mod e2e_rfq_workflow_tests {
+    use super::*;
+    use crate::domain::value_objects::RfqState;
+
+    /// Test fixture containing all mocks and use cases for E2E testing.
+    struct E2ETestFixture {
+        rfq_repo: Arc<MockRfqRepository>,
+        trade_repo: Arc<MockTradeRepository>,
+        rfq_event_pub: Arc<MockEventPublisher>,
+        quote_event_pub: Arc<MockQuoteEventPublisher>,
+        trade_event_pub: Arc<MockTradeEventPublisher>,
+        compliance: Arc<MockComplianceService>,
+        client_repo: Arc<MockClientRepository>,
+        instrument_reg: Arc<MockInstrumentRegistry>,
+    }
+
+    impl E2ETestFixture {
+        fn new() -> Self {
+            Self {
+                rfq_repo: Arc::new(MockRfqRepository::new()),
+                trade_repo: Arc::new(MockTradeRepository::new()),
+                rfq_event_pub: Arc::new(MockEventPublisher::new()),
+                quote_event_pub: Arc::new(MockQuoteEventPublisher::default()),
+                trade_event_pub: Arc::new(MockTradeEventPublisher::default()),
+                compliance: Arc::new(MockComplianceService::passing()),
+                client_repo: Arc::new(MockClientRepository::with_active_client("client-1")),
+                instrument_reg: Arc::new(MockInstrumentRegistry::with_instruments(vec![
+                    ("BTC", "USD"),
+                    ("ETH", "USD"),
+                    ("BTC", "EUR"),
+                ])),
+            }
+        }
+
+        fn create_rfq_use_case(&self) -> CreateRfqUseCase {
+            CreateRfqUseCase::new(
+                self.rfq_repo.clone(),
+                self.rfq_event_pub.clone(),
+                self.compliance.clone(),
+                self.client_repo.clone(),
+                self.instrument_reg.clone(),
+            )
+        }
+
+        fn collect_quotes_use_case(
+            &self,
+            venues: Vec<Arc<dyn VenueAdapter>>,
+        ) -> CollectQuotesUseCase {
+            CollectQuotesUseCase::new(
+                self.rfq_repo.clone(),
+                self.quote_event_pub.clone(),
+                Arc::new(MockVenueRegistry::with_venues(venues)),
+                CollectQuotesConfig::with_timeout(1000),
+            )
+        }
+
+        fn execute_trade_use_case(
+            &self,
+            venues: Vec<Arc<dyn VenueAdapter>>,
+        ) -> ExecuteTradeUseCase {
+            ExecuteTradeUseCase::new(
+                self.rfq_repo.clone(),
+                self.trade_repo.clone(),
+                self.trade_event_pub.clone(),
+                Arc::new(MockVenueRegistry::with_venues(venues)),
+            )
+        }
+    }
+
+    // ========================================================================
+    // Full Workflow Tests
+    // ========================================================================
+
+    /// Tests the complete happy path: Create RFQ -> Collect Quotes -> Execute Trade.
+    #[tokio::test]
+    async fn e2e_complete_rfq_workflow_happy_path() {
+        let fixture = E2ETestFixture::new();
+
+        // Step 1: Create RFQ via use case
+        let create_uc = fixture.create_rfq_use_case();
+        let create_req = CreateRfqRequest::new("client-1", "BTC", "USD", OrderSide::Buy, 2.5, 300);
+        let create_result = create_uc.execute(create_req).await;
+
+        assert!(create_result.is_ok(), "RFQ creation should succeed");
+        let rfq_response = create_result.unwrap();
+        let rfq_id = rfq_response.rfq_id;
+
+        // Verify RFQ created event was published
+        assert_eq!(fixture.rfq_event_pub.rfq_created_count(), 1);
+
+        // Verify RFQ is in Created state
+        let rfq = fixture.rfq_repo.get_rfq(rfq_id).unwrap();
+        assert_eq!(rfq.state(), RfqState::Created);
+
+        // Step 2: Collect quotes from multiple venues
+        let venues: Vec<Arc<dyn VenueAdapter>> = vec![
+            Arc::new(MockVenueAdapter::successful_quote("venue-alpha", rfq_id)),
+            Arc::new(MockVenueAdapter::successful_quote("venue-beta", rfq_id)),
+            Arc::new(MockVenueAdapter::successful_quote("venue-gamma", rfq_id)),
+        ];
+
+        let collect_uc = fixture.collect_quotes_use_case(venues);
+        let collect_result = collect_uc.execute(rfq_id).await;
+
+        assert!(collect_result.is_ok(), "Quote collection should succeed");
+        let quotes_response = collect_result.unwrap();
+
+        // Verify we got quotes from all venues
+        assert_eq!(quotes_response.success_count(), 3);
+        assert_eq!(quotes_response.venues_queried, 3);
+        assert_eq!(quotes_response.failure_count(), 0);
+
+        // Verify RFQ state is now QuotesReceived
+        let rfq = fixture.rfq_repo.get_rfq(rfq_id).unwrap();
+        assert_eq!(rfq.state(), RfqState::QuotesReceived);
+        assert_eq!(rfq.quote_count(), 3);
+
+        // Step 3: Select best quote and execute trade
+        let best_quote = quotes_response.quotes.first().unwrap();
+        let quote_id = best_quote.id();
+
+        let exec_venues: Vec<Arc<dyn VenueAdapter>> = vec![Arc::new(
+            MockVenueAdapter::successful_execution("venue-alpha", quote_id),
+        )];
+
+        let execute_uc = fixture.execute_trade_use_case(exec_venues);
+        let execute_req = ExecuteTradeRequest::new(rfq_id, quote_id);
+        let execute_result = execute_uc.execute(execute_req).await;
+
+        assert!(execute_result.is_ok(), "Trade execution should succeed");
+        let trade_response = execute_result.unwrap();
+
+        // Verify trade was created
+        assert_eq!(fixture.trade_repo.save_count(), 1);
+        assert_eq!(fixture.trade_event_pub.executed_count(), 1);
+
+        // Verify trade details
+        assert_eq!(trade_response.rfq_id, rfq_id);
+        assert!(trade_response.execution_time_ms < 1000);
+
+        // Verify final RFQ state is Executed
+        let final_rfq = fixture.rfq_repo.get_rfq(rfq_id).unwrap();
+        assert_eq!(final_rfq.state(), RfqState::Executed);
+    }
+
+    /// Tests workflow with multiple quotes and selecting the best one.
+    #[tokio::test]
+    async fn e2e_select_best_quote_from_multiple_venues() {
+        let fixture = E2ETestFixture::new();
+
+        // Create RFQ
+        let create_uc = fixture.create_rfq_use_case();
+        let create_req =
+            CreateRfqRequest::new("client-1", "ETH", "USD", OrderSide::Sell, 10.0, 300);
+        let rfq_id = create_uc.execute(create_req).await.unwrap().rfq_id;
+
+        // Collect quotes from multiple venues
+        let venues: Vec<Arc<dyn VenueAdapter>> = vec![
+            Arc::new(MockVenueAdapter::successful_quote("venue-1", rfq_id)),
+            Arc::new(MockVenueAdapter::successful_quote("venue-2", rfq_id)),
+        ];
+
+        let collect_uc = fixture.collect_quotes_use_case(venues);
+        let quotes_response = collect_uc.execute(rfq_id).await.unwrap();
+
+        assert_eq!(quotes_response.quotes.len(), 2);
+
+        // In a real scenario, we'd select the best quote by price
+        // For this test, we just verify we can execute any of them
+        let selected_quote = &quotes_response.quotes[0];
+
+        let exec_venues: Vec<Arc<dyn VenueAdapter>> = vec![Arc::new(
+            MockVenueAdapter::successful_execution("venue-1", selected_quote.id()),
+        )];
+
+        let execute_uc = fixture.execute_trade_use_case(exec_venues);
+        let result = execute_uc
+            .execute(ExecuteTradeRequest::new(rfq_id, selected_quote.id()))
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    // ========================================================================
+    // State Transition Tests
+    // ========================================================================
+
+    /// Verifies correct state transitions throughout the workflow.
+    #[tokio::test]
+    async fn e2e_verify_state_transitions() {
+        let fixture = E2ETestFixture::new();
+
+        // Initial: No RFQ exists
+        let create_uc = fixture.create_rfq_use_case();
+        let create_req = CreateRfqRequest::new("client-1", "BTC", "USD", OrderSide::Buy, 1.0, 300);
+        let rfq_id = create_uc.execute(create_req).await.unwrap().rfq_id;
+
+        // State 1: Created
+        let rfq = fixture.rfq_repo.get_rfq(rfq_id).unwrap();
+        assert_eq!(rfq.state(), RfqState::Created, "After creation");
+
+        // Collect quotes
+        let venues: Vec<Arc<dyn VenueAdapter>> = vec![Arc::new(
+            MockVenueAdapter::successful_quote("venue-1", rfq_id),
+        )];
+        let collect_uc = fixture.collect_quotes_use_case(venues);
+        let quotes = collect_uc.execute(rfq_id).await.unwrap();
+
+        // State 2: QuotesReceived
+        let rfq = fixture.rfq_repo.get_rfq(rfq_id).unwrap();
+        assert_eq!(
+            rfq.state(),
+            RfqState::QuotesReceived,
+            "After quotes received"
+        );
+
+        // Execute trade
+        let quote_id = quotes.quotes[0].id();
+        let exec_venues: Vec<Arc<dyn VenueAdapter>> = vec![Arc::new(
+            MockVenueAdapter::successful_execution("venue-1", quote_id),
+        )];
+        let execute_uc = fixture.execute_trade_use_case(exec_venues);
+        execute_uc
+            .execute(ExecuteTradeRequest::new(rfq_id, quote_id))
+            .await
+            .unwrap();
+
+        // State 3: Executed
+        let rfq = fixture.rfq_repo.get_rfq(rfq_id).unwrap();
+        assert_eq!(rfq.state(), RfqState::Executed, "After trade executed");
+    }
+
+    // ========================================================================
+    // Domain Event Tests
+    // ========================================================================
+
+    /// Verifies all domain events are emitted correctly throughout the workflow.
+    #[tokio::test]
+    async fn e2e_verify_domain_events_emitted() {
+        let fixture = E2ETestFixture::new();
+
+        // Create RFQ
+        let create_uc = fixture.create_rfq_use_case();
+        let create_req = CreateRfqRequest::new("client-1", "BTC", "USD", OrderSide::Buy, 1.0, 300);
+        let rfq_id = create_uc.execute(create_req).await.unwrap().rfq_id;
+
+        // Verify RfqCreated event
+        assert_eq!(
+            fixture.rfq_event_pub.rfq_created_count(),
+            1,
+            "RfqCreated event should be published"
+        );
+
+        // Collect quotes
+        let venues: Vec<Arc<dyn VenueAdapter>> = vec![
+            Arc::new(MockVenueAdapter::successful_quote("venue-1", rfq_id)),
+            Arc::new(MockVenueAdapter::successful_quote("venue-2", rfq_id)),
+        ];
+        let collect_uc = fixture.collect_quotes_use_case(venues);
+        let quotes = collect_uc.execute(rfq_id).await.unwrap();
+
+        // Execute trade
+        let quote_id = quotes.quotes[0].id();
+        let exec_venues: Vec<Arc<dyn VenueAdapter>> = vec![Arc::new(
+            MockVenueAdapter::successful_execution("venue-1", quote_id),
+        )];
+        let execute_uc = fixture.execute_trade_use_case(exec_venues);
+        execute_uc
+            .execute(ExecuteTradeRequest::new(rfq_id, quote_id))
+            .await
+            .unwrap();
+
+        // Verify TradeExecuted event
+        assert_eq!(
+            fixture.trade_event_pub.executed_count(),
+            1,
+            "TradeExecuted event should be published"
+        );
+    }
+
+    // ========================================================================
+    // Failure Scenario Tests
+    // ========================================================================
+
+    /// Tests workflow when all venues fail to provide quotes.
+    #[tokio::test]
+    async fn e2e_all_venues_fail_to_quote() {
+        let fixture = E2ETestFixture::new();
+
+        // Create RFQ
+        let create_uc = fixture.create_rfq_use_case();
+        let create_req = CreateRfqRequest::new("client-1", "BTC", "USD", OrderSide::Buy, 1.0, 300);
+        let rfq_id = create_uc.execute(create_req).await.unwrap().rfq_id;
+
+        // All venues fail
+        let venues: Vec<Arc<dyn VenueAdapter>> = vec![
+            Arc::new(MockVenueAdapter::failing_quote("venue-1", "no liquidity")),
+            Arc::new(MockVenueAdapter::failing_quote("venue-2", "market closed")),
+        ];
+
+        let collect_uc = CollectQuotesUseCase::new(
+            fixture.rfq_repo.clone(),
+            fixture.quote_event_pub.clone(),
+            Arc::new(MockVenueRegistry::with_venues(venues)),
+            CollectQuotesConfig::with_timeout(1000).with_min_quotes(1),
+        );
+
+        let result = collect_uc.execute(rfq_id).await;
+
+        // Should fail because min_quotes=1 but no quotes received
+        assert!(result.is_err());
+        assert!(matches!(result, Err(ApplicationError::Validation(_))));
+    }
+
+    /// Tests workflow when trade execution fails.
+    #[tokio::test]
+    async fn e2e_trade_execution_fails() {
+        let fixture = E2ETestFixture::new();
+
+        // Create RFQ and collect quotes
+        let create_uc = fixture.create_rfq_use_case();
+        let create_req = CreateRfqRequest::new("client-1", "BTC", "USD", OrderSide::Buy, 1.0, 300);
+        let rfq_id = create_uc.execute(create_req).await.unwrap().rfq_id;
+
+        let venues: Vec<Arc<dyn VenueAdapter>> = vec![Arc::new(
+            MockVenueAdapter::successful_quote("venue-1", rfq_id),
+        )];
+        let collect_uc = fixture.collect_quotes_use_case(venues);
+        let quotes = collect_uc.execute(rfq_id).await.unwrap();
+
+        let quote_id = quotes.quotes[0].id();
+
+        // Execution fails
+        let exec_venues: Vec<Arc<dyn VenueAdapter>> = vec![Arc::new(
+            MockVenueAdapter::failing_execution("venue-1", "insufficient balance"),
+        )];
+        let execute_uc = fixture.execute_trade_use_case(exec_venues);
+        let result = execute_uc
+            .execute(ExecuteTradeRequest::new(rfq_id, quote_id))
+            .await;
+
+        assert!(result.is_err());
+        assert!(matches!(result, Err(ApplicationError::ExecutionFailed(_))));
+
+        // Trade should not be saved
+        assert_eq!(fixture.trade_repo.save_count(), 0);
+    }
+
+    /// Tests workflow with partial venue failures during quote collection.
+    #[tokio::test]
+    async fn e2e_partial_venue_failures() {
+        let fixture = E2ETestFixture::new();
+
+        // Create RFQ
+        let create_uc = fixture.create_rfq_use_case();
+        let create_req = CreateRfqRequest::new("client-1", "BTC", "USD", OrderSide::Buy, 1.0, 300);
+        let rfq_id = create_uc.execute(create_req).await.unwrap().rfq_id;
+
+        // Mixed success and failure
+        let venues: Vec<Arc<dyn VenueAdapter>> = vec![
+            Arc::new(MockVenueAdapter::successful_quote("venue-1", rfq_id)),
+            Arc::new(MockVenueAdapter::failing_quote("venue-2", "timeout")),
+            Arc::new(MockVenueAdapter::successful_quote("venue-3", rfq_id)),
+        ];
+
+        let collect_uc = fixture.collect_quotes_use_case(venues);
+        let result = collect_uc.execute(rfq_id).await;
+
+        assert!(result.is_ok());
+        let response = result.unwrap();
+
+        // Should have 2 successful quotes, 1 failure
+        assert_eq!(response.success_count(), 2);
+        assert_eq!(response.failure_count(), 1);
+
+        // Workflow can continue with available quotes
+        let quote_id = response.quotes[0].id();
+        let exec_venues: Vec<Arc<dyn VenueAdapter>> = vec![Arc::new(
+            MockVenueAdapter::successful_execution("venue-1", quote_id),
+        )];
+        let execute_uc = fixture.execute_trade_use_case(exec_venues);
+        let exec_result = execute_uc
+            .execute(ExecuteTradeRequest::new(rfq_id, quote_id))
+            .await;
+
+        assert!(exec_result.is_ok());
+    }
+
+    /// Tests workflow when venue times out during quote collection.
+    #[tokio::test]
+    async fn e2e_venue_timeout_during_quotes() {
+        let fixture = E2ETestFixture::new();
+
+        // Create RFQ
+        let create_uc = fixture.create_rfq_use_case();
+        let create_req = CreateRfqRequest::new("client-1", "BTC", "USD", OrderSide::Buy, 1.0, 300);
+        let rfq_id = create_uc.execute(create_req).await.unwrap().rfq_id;
+
+        // One venue is slow
+        let venues: Vec<Arc<dyn VenueAdapter>> = vec![
+            Arc::new(MockVenueAdapter::successful_quote("venue-fast", rfq_id)),
+            Arc::new(MockVenueAdapter::slow_quote("venue-slow", 500)), // 500ms delay
+        ];
+
+        let collect_uc = CollectQuotesUseCase::new(
+            fixture.rfq_repo.clone(),
+            fixture.quote_event_pub.clone(),
+            Arc::new(MockVenueRegistry::with_venues(venues)),
+            CollectQuotesConfig::with_timeout(100), // 100ms timeout
+        );
+
+        let result = collect_uc.execute(rfq_id).await;
+
+        assert!(result.is_ok());
+        let response = result.unwrap();
+
+        // Fast venue succeeded, slow venue timed out
+        assert_eq!(response.success_count(), 1);
+        assert_eq!(response.failure_count(), 1);
+
+        // Verify timeout error
+        let timeout_failure = response
+            .failures
+            .iter()
+            .find(|f| f.venue_id.as_str() == "venue-slow");
+        assert!(timeout_failure.is_some());
+        assert!(timeout_failure
+            .unwrap()
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("timed out"));
+    }
+
+    /// Tests that compliance failure prevents RFQ creation.
+    #[tokio::test]
+    async fn e2e_compliance_failure_blocks_workflow() {
+        let fixture = E2ETestFixture {
+            compliance: Arc::new(MockComplianceService::failing("Sanctioned entity")),
+            ..E2ETestFixture::new()
+        };
+
+        let create_uc = fixture.create_rfq_use_case();
+        let create_req = CreateRfqRequest::new("client-1", "BTC", "USD", OrderSide::Buy, 1.0, 300);
+        let result = create_uc.execute(create_req).await;
+
+        assert!(result.is_err());
+        assert!(matches!(result, Err(ApplicationError::ComplianceFailed(_))));
+
+        // No RFQ should be created
+        assert_eq!(fixture.rfq_repo.save_count(), 0);
+    }
+
+    /// Tests workflow with invalid RFQ ID during quote collection.
+    #[tokio::test]
+    async fn e2e_invalid_rfq_id_during_quotes() {
+        let fixture = E2ETestFixture::new();
+
+        let invalid_rfq_id = RfqId::new_v4();
+        let venues: Vec<Arc<dyn VenueAdapter>> = vec![Arc::new(
+            MockVenueAdapter::successful_quote("venue-1", invalid_rfq_id),
+        )];
+
+        let collect_uc = fixture.collect_quotes_use_case(venues);
+        let result = collect_uc.execute(invalid_rfq_id).await;
+
+        // Should fail because RFQ doesn't exist in repository
+        assert!(result.is_err());
+        // The error message should indicate RFQ not found
+        let err_msg = format!("{:?}", result.unwrap_err());
+        assert!(
+            err_msg.contains("not found") || err_msg.contains("RFQ"),
+            "Error should indicate RFQ not found: {}",
+            err_msg
+        );
+    }
+
+    /// Tests workflow with invalid quote ID during execution.
+    #[tokio::test]
+    async fn e2e_invalid_quote_id_during_execution() {
+        let fixture = E2ETestFixture::new();
+
+        // Create RFQ and collect quotes
+        let create_uc = fixture.create_rfq_use_case();
+        let create_req = CreateRfqRequest::new("client-1", "BTC", "USD", OrderSide::Buy, 1.0, 300);
+        let rfq_id = create_uc.execute(create_req).await.unwrap().rfq_id;
+
+        let venues: Vec<Arc<dyn VenueAdapter>> = vec![Arc::new(
+            MockVenueAdapter::successful_quote("venue-1", rfq_id),
+        )];
+        let collect_uc = fixture.collect_quotes_use_case(venues);
+        collect_uc.execute(rfq_id).await.unwrap();
+
+        // Try to execute with invalid quote ID
+        let invalid_quote_id = QuoteId::new_v4();
+        let exec_venues: Vec<Arc<dyn VenueAdapter>> = vec![Arc::new(
+            MockVenueAdapter::successful_execution("venue-1", invalid_quote_id),
+        )];
+        let execute_uc = fixture.execute_trade_use_case(exec_venues);
+        let result = execute_uc
+            .execute(ExecuteTradeRequest::new(rfq_id, invalid_quote_id))
+            .await;
+
+        assert!(result.is_err());
+        assert!(matches!(result, Err(ApplicationError::QuoteNotFound(_))));
+    }
+
+    // ========================================================================
+    // Concurrent Workflow Tests
+    // ========================================================================
+
+    /// Tests multiple concurrent RFQ workflows.
+    #[tokio::test]
+    async fn e2e_concurrent_rfq_workflows() {
+        let fixture = E2ETestFixture::new();
+
+        // Create use cases that will be moved into futures
+        let uc1 = CreateRfqUseCase::new(
+            fixture.rfq_repo.clone(),
+            fixture.rfq_event_pub.clone(),
+            fixture.compliance.clone(),
+            fixture.client_repo.clone(),
+            fixture.instrument_reg.clone(),
+        );
+        let uc2 = CreateRfqUseCase::new(
+            fixture.rfq_repo.clone(),
+            fixture.rfq_event_pub.clone(),
+            fixture.compliance.clone(),
+            fixture.client_repo.clone(),
+            fixture.instrument_reg.clone(),
+        );
+
+        let req1 = CreateRfqRequest::new("client-1", "BTC", "USD", OrderSide::Buy, 1.0, 300);
+        let req2 = CreateRfqRequest::new("client-1", "ETH", "USD", OrderSide::Sell, 5.0, 300);
+
+        // Execute concurrently
+        let (result1, result2) = tokio::join!(uc1.execute(req1), uc2.execute(req2));
+
+        assert!(result1.is_ok());
+        assert!(result2.is_ok());
+
+        let rfq_id1 = result1.unwrap().rfq_id;
+        let rfq_id2 = result2.unwrap().rfq_id;
+
+        // Both RFQs should be created
+        assert!(fixture.rfq_repo.get_rfq(rfq_id1).is_some());
+        assert!(fixture.rfq_repo.get_rfq(rfq_id2).is_some());
+        assert_ne!(rfq_id1, rfq_id2);
+    }
+}
