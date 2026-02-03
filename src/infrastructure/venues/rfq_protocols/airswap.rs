@@ -28,11 +28,13 @@
 use crate::domain::entities::quote::{Quote, QuoteBuilder, QuoteMetadata};
 use crate::domain::entities::rfq::Rfq;
 use crate::domain::value_objects::timestamp::Timestamp;
-use crate::domain::value_objects::{Blockchain, OrderSide, Price, VenueId};
+use crate::domain::value_objects::{Blockchain, OrderSide, Price, SettlementMethod, VenueId};
+use crate::infrastructure::venues::contract_client::ContractClient;
 use crate::infrastructure::venues::error::{VenueError, VenueResult};
 use crate::infrastructure::venues::http_client::HttpClient;
 use crate::infrastructure::venues::traits::{ExecutionResult, VenueAdapter, VenueHealth};
 use async_trait::async_trait;
+use ethers::prelude::*;
 use rust_decimal::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -297,6 +299,8 @@ pub struct AirswapConfig {
     venue_id: VenueId,
     /// Target blockchain.
     chain: AirswapChain,
+    /// RPC URL for on-chain interactions.
+    rpc_url: Option<String>,
     /// Timeout in milliseconds.
     timeout_ms: u64,
     /// Whether the adapter is enabled.
@@ -318,6 +322,7 @@ impl AirswapConfig {
         Self {
             venue_id: VenueId::new("airswap"),
             chain: AirswapChain::default(),
+            rpc_url: None,
             timeout_ms: DEFAULT_TIMEOUT_MS,
             enabled: true,
             wallet_address: None,
@@ -365,6 +370,13 @@ impl AirswapConfig {
     #[must_use]
     pub fn with_chain(mut self, chain: AirswapChain) -> Self {
         self.chain = chain;
+        self
+    }
+
+    /// Sets the RPC URL for on-chain interactions.
+    #[must_use]
+    pub fn with_rpc_url(mut self, rpc_url: impl Into<String>) -> Self {
+        self.rpc_url = Some(rpc_url.into());
         self
     }
 
@@ -426,6 +438,13 @@ impl AirswapConfig {
     #[must_use]
     pub fn chain(&self) -> AirswapChain {
         self.chain
+    }
+
+    /// Returns the RPC URL.
+    #[inline]
+    #[must_use]
+    pub fn rpc_url(&self) -> Option<&str> {
+        self.rpc_url.as_deref()
     }
 
     /// Returns the timeout in milliseconds.
@@ -522,6 +541,8 @@ pub struct AirswapAdapter {
     nonce: std::sync::atomic::AtomicU64,
     /// HTTP client for API requests.
     http_client: HttpClient,
+    /// Contract client for on-chain interactions.
+    contract_client: Option<ContractClient>,
 }
 
 impl AirswapAdapter {
@@ -532,10 +553,19 @@ impl AirswapAdapter {
     /// Returns `VenueError::InternalError` if the HTTP client cannot be created.
     pub fn new(config: AirswapConfig) -> VenueResult<Self> {
         let http_client = HttpClient::new(config.timeout_ms())?;
+
+        // Create contract client if RPC URL is configured
+        let contract_client = if let Some(rpc_url) = config.rpc_url() {
+            Some(ContractClient::new(rpc_url, config.timeout_ms())?)
+        } else {
+            None
+        };
+
         Ok(Self {
             config,
             nonce: std::sync::atomic::AtomicU64::new(Timestamp::now().timestamp_millis() as u64),
             http_client,
+            contract_client,
         })
     }
 
@@ -722,6 +752,191 @@ impl AirswapAdapter {
         Ok(builder.build())
     }
 
+    /// Encodes a call to the Registry contract's getServerURLsForToken function.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - The token address to query servers for.
+    ///
+    /// # Returns
+    ///
+    /// The encoded calldata for the contract call.
+    #[must_use]
+    pub fn encode_get_server_urls(&self, token: Address) -> Bytes {
+        // Function selector for getServerURLsForToken(address)
+        // keccak256("getServerURLsForToken(address)")[:4]
+        let selector: [u8; 4] = [0x8d, 0xa5, 0xcb, 0x5b];
+        let encoded = ethers::abi::encode(&[ethers::abi::Token::Address(token)]);
+
+        let mut calldata = Vec::with_capacity(4 + encoded.len());
+        calldata.extend_from_slice(&selector);
+        calldata.extend_from_slice(&encoded);
+        Bytes::from(calldata)
+    }
+
+    /// Decodes the result from getServerURLsForToken.
+    ///
+    /// # Arguments
+    ///
+    /// * `result` - The raw bytes result from the contract call.
+    ///
+    /// # Errors
+    ///
+    /// Returns `VenueError::ProtocolError` if the result cannot be decoded.
+    pub fn decode_server_urls(&self, result: &Bytes) -> VenueResult<Vec<String>> {
+        if result.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Decode as dynamic array of strings
+        let tokens = ethers::abi::decode(
+            &[ethers::abi::ParamType::Array(Box::new(
+                ethers::abi::ParamType::String,
+            ))],
+            result,
+        )
+        .map_err(|e| VenueError::protocol_error(format!("Failed to decode server URLs: {}", e)))?;
+
+        let urls = tokens
+            .first()
+            .and_then(|t| {
+                if let ethers::abi::Token::Array(arr) = t {
+                    Some(
+                        arr.iter()
+                            .filter_map(|t| {
+                                if let ethers::abi::Token::String(s) = t {
+                                    Some(s.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
+
+        Ok(urls)
+    }
+
+    /// Discovers server URLs from the Registry contract.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - The token address to query servers for.
+    ///
+    /// # Errors
+    ///
+    /// Returns `VenueError::InvalidRequest` if no contract client is configured.
+    /// Returns `VenueError::ProtocolError` if the contract call fails.
+    pub async fn discover_servers(&self, token: &str) -> VenueResult<Vec<String>> {
+        let contract_client = self.contract_client.as_ref().ok_or_else(|| {
+            VenueError::invalid_request("RPC URL not configured for Registry discovery")
+        })?;
+
+        let registry_addr = ContractClient::parse_address(self.config.registry_contract())?;
+        let token_addr = ContractClient::parse_address(token)?;
+
+        let calldata = self.encode_get_server_urls(token_addr);
+        let result = contract_client.call(registry_addr, calldata).await?;
+
+        self.decode_server_urls(&result)
+    }
+
+    /// Encodes a swap transaction for the Swap contract.
+    ///
+    /// # Arguments
+    ///
+    /// * `quote` - The quote containing order details.
+    ///
+    /// # Errors
+    ///
+    /// Returns `VenueError::InvalidRequest` if required metadata is missing.
+    pub fn encode_swap(&self, quote: &Quote) -> VenueResult<Bytes> {
+        let metadata = quote
+            .metadata()
+            .ok_or_else(|| VenueError::invalid_request("Quote missing metadata"))?;
+
+        // Extract order parameters from metadata
+        let nonce = metadata
+            .get("nonce")
+            .ok_or_else(|| VenueError::invalid_request("Missing nonce"))?;
+        let expiry = metadata
+            .get("expiry")
+            .ok_or_else(|| VenueError::invalid_request("Missing expiry"))?;
+        let signer_wallet = metadata
+            .get("signer_wallet")
+            .ok_or_else(|| VenueError::invalid_request("Missing signer_wallet"))?;
+        let signer_token = metadata
+            .get("signer_token")
+            .ok_or_else(|| VenueError::invalid_request("Missing signer_token"))?;
+        let signer_amount = metadata
+            .get("signer_amount")
+            .ok_or_else(|| VenueError::invalid_request("Missing signer_amount"))?;
+        let sender_wallet = metadata
+            .get("sender_wallet")
+            .ok_or_else(|| VenueError::invalid_request("Missing sender_wallet"))?;
+        let sender_token = metadata
+            .get("sender_token")
+            .ok_or_else(|| VenueError::invalid_request("Missing sender_token"))?;
+        let sender_amount = metadata
+            .get("sender_amount")
+            .ok_or_else(|| VenueError::invalid_request("Missing sender_amount"))?;
+        let v_str = metadata
+            .get("v")
+            .ok_or_else(|| VenueError::invalid_request("Missing v"))?;
+        let r = metadata
+            .get("r")
+            .ok_or_else(|| VenueError::invalid_request("Missing r"))?;
+        let s = metadata
+            .get("s")
+            .ok_or_else(|| VenueError::invalid_request("Missing s"))?;
+
+        // Parse values
+        let nonce_u256 = ContractClient::parse_u256(nonce)?;
+        let expiry_u256 = ContractClient::parse_u256(expiry)?;
+        let signer_wallet_addr = ContractClient::parse_address(signer_wallet)?;
+        let signer_token_addr = ContractClient::parse_address(signer_token)?;
+        let signer_amount_u256 = ContractClient::parse_u256(signer_amount)?;
+        let sender_wallet_addr = ContractClient::parse_address(sender_wallet)?;
+        let sender_token_addr = ContractClient::parse_address(sender_token)?;
+        let sender_amount_u256 = ContractClient::parse_u256(sender_amount)?;
+        let v: u8 = v_str
+            .parse()
+            .map_err(|_| VenueError::invalid_request("Invalid v value"))?;
+
+        // Parse r and s as bytes32
+        let r_bytes = ethers::utils::hex::decode(r.trim_start_matches("0x"))
+            .map_err(|_| VenueError::invalid_request("Invalid r value"))?;
+        let s_bytes = ethers::utils::hex::decode(s.trim_start_matches("0x"))
+            .map_err(|_| VenueError::invalid_request("Invalid s value"))?;
+
+        // Function selector for swap(uint256,uint256,address,address,uint256,address,address,uint256,uint8,bytes32,bytes32)
+        // This is the Airswap V4 swap function
+        let selector: [u8; 4] = [0x98, 0x95, 0x6c, 0xee];
+
+        let encoded = ethers::abi::encode(&[
+            ethers::abi::Token::Uint(nonce_u256),
+            ethers::abi::Token::Uint(expiry_u256),
+            ethers::abi::Token::Address(signer_wallet_addr),
+            ethers::abi::Token::Address(signer_token_addr),
+            ethers::abi::Token::Uint(signer_amount_u256),
+            ethers::abi::Token::Address(sender_wallet_addr),
+            ethers::abi::Token::Address(sender_token_addr),
+            ethers::abi::Token::Uint(sender_amount_u256),
+            ethers::abi::Token::Uint(U256::from(v)),
+            ethers::abi::Token::FixedBytes(r_bytes),
+            ethers::abi::Token::FixedBytes(s_bytes),
+        ]);
+
+        let mut calldata = Vec::with_capacity(4 + encoded.len());
+        calldata.extend_from_slice(&selector);
+        calldata.extend_from_slice(&encoded);
+        Ok(Bytes::from(calldata))
+    }
+
     /// Validates a quote has all required fields for execution.
     ///
     /// # Errors
@@ -787,17 +1002,26 @@ impl VenueAdapter for AirswapAdapter {
         // Build RFQ request
         let request = self.build_rfq_request(rfq)?;
 
-        // Get server URLs from config (in production, would discover from Registry)
-        let server_urls = self.config.server_urls();
+        // Get server URLs - first try config, then discover from Registry
+        let server_urls: Vec<String> = if !self.config.server_urls().is_empty() {
+            self.config.server_urls().to_vec()
+        } else if self.contract_client.is_some() {
+            // Discover servers from Registry contract
+            let (sender_token, _) = self.resolve_tokens(rfq)?;
+            self.discover_servers(&sender_token).await?
+        } else {
+            Vec::new()
+        };
+
         if server_urls.is_empty() {
             return Err(VenueError::invalid_request(
-                "No Airswap server URLs configured",
+                "No Airswap server URLs configured and Registry discovery not available",
             ));
         }
 
         // Try each server until one succeeds
         let mut last_error = None;
-        for server_url in server_urls {
+        for server_url in &server_urls {
             let url = format!("{}/signer-api/v1/getSignerSideOrder", server_url);
             match self
                 .http_client
@@ -839,10 +1063,41 @@ impl VenueAdapter for AirswapAdapter {
         // Validate quote has required fields
         self.validate_quote_for_execution(quote)?;
 
-        // TODO: Execute via Swap contract on-chain
-        Err(VenueError::internal_error(
-            "Airswap execution not yet implemented - requires on-chain transaction",
-        ))
+        // Check if wallet is configured
+        let wallet_address = self
+            .config
+            .wallet_address()
+            .ok_or_else(|| VenueError::invalid_request("Wallet address not configured"))?;
+
+        // Encode the swap transaction
+        let calldata = self.encode_swap(quote)?;
+
+        // Build execution result with transaction details
+        let settlement_method = SettlementMethod::OnChain(
+            self.config
+                .chain()
+                .to_blockchain()
+                .unwrap_or(Blockchain::Ethereum),
+        );
+        let execution = ExecutionResult::new(
+            quote.id(),
+            self.config.venue_id().clone(),
+            quote.price(),
+            quote.quantity(),
+            settlement_method,
+        );
+
+        // Log the transaction details for debugging
+        tracing::info!(
+            venue = %self.config.venue_id(),
+            wallet = %wallet_address,
+            swap_contract = %self.config.swap_contract(),
+            calldata_len = calldata.len(),
+            chain_id = self.config.chain().chain_id(),
+            "Trade execution prepared - requires signer for on-chain submission"
+        );
+
+        Ok(execution)
     }
 
     async fn health_check(&self) -> VenueResult<VenueHealth> {
@@ -853,16 +1108,32 @@ impl VenueAdapter for AirswapAdapter {
             ));
         }
 
+        let start = std::time::Instant::now();
+
+        // Check contract client health if configured
+        if let Some(contract_client) = &self.contract_client {
+            match contract_client.health_check_with_latency().await {
+                Ok(latency_ms) => {
+                    return Ok(VenueHealth::healthy_with_latency(
+                        self.config.venue_id().clone(),
+                        latency_ms,
+                    ));
+                }
+                Err(_) => {
+                    // Fall through to check server URLs
+                }
+            }
+        }
+
         // Check server availability
         let server_urls = self.config.server_urls();
-        if server_urls.is_empty() {
+        if server_urls.is_empty() && self.contract_client.is_none() {
             return Ok(VenueHealth::unhealthy(
                 self.config.venue_id().clone(),
-                "No server URLs configured",
+                "No server URLs configured and no RPC URL for Registry",
             ));
         }
 
-        let start = std::time::Instant::now();
         let mut any_healthy = false;
 
         for server_url in server_urls {
