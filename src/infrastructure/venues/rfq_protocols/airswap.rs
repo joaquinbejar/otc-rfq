@@ -30,6 +30,7 @@ use crate::domain::entities::rfq::Rfq;
 use crate::domain::value_objects::timestamp::Timestamp;
 use crate::domain::value_objects::{Blockchain, OrderSide, Price, VenueId};
 use crate::infrastructure::venues::error::{VenueError, VenueResult};
+use crate::infrastructure::venues::http_client::HttpClient;
 use crate::infrastructure::venues::traits::{ExecutionResult, VenueAdapter, VenueHealth};
 use async_trait::async_trait;
 use rust_decimal::prelude::*;
@@ -514,26 +515,28 @@ impl Default for AirswapConfig {
 /// - Order expiry tracking
 /// - Nonce management
 /// - Multi-chain support
-///
-/// # Note
-///
-/// This is a stub implementation. Full HTTP client and contract
-/// integration will be completed with reqwest and ethers.
 pub struct AirswapAdapter {
     /// Configuration.
     config: AirswapConfig,
     /// Current nonce for order creation.
     nonce: std::sync::atomic::AtomicU64,
+    /// HTTP client for API requests.
+    http_client: HttpClient,
 }
 
 impl AirswapAdapter {
     /// Creates a new Airswap adapter.
-    #[must_use]
-    pub fn new(config: AirswapConfig) -> Self {
-        Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns `VenueError::InternalError` if the HTTP client cannot be created.
+    pub fn new(config: AirswapConfig) -> VenueResult<Self> {
+        let http_client = HttpClient::new(config.timeout_ms())?;
+        Ok(Self {
             config,
             nonce: std::sync::atomic::AtomicU64::new(Timestamp::now().timestamp_millis() as u64),
-        }
+            http_client,
+        })
     }
 
     /// Returns the configuration.
@@ -782,14 +785,36 @@ impl VenueAdapter for AirswapAdapter {
         }
 
         // Build RFQ request
-        let _request = self.build_rfq_request(rfq)?;
+        let request = self.build_rfq_request(rfq)?;
 
-        // TODO: Discover servers from Registry contract
-        // TODO: Make HTTP request to Airswap servers
-        // For now, return a stub error indicating not implemented
-        Err(VenueError::internal_error(
-            "Airswap API integration not yet implemented - requires HTTP client and contract calls",
-        ))
+        // Get server URLs from config (in production, would discover from Registry)
+        let server_urls = self.config.server_urls();
+        if server_urls.is_empty() {
+            return Err(VenueError::invalid_request(
+                "No Airswap server URLs configured",
+            ));
+        }
+
+        // Try each server until one succeeds
+        let mut last_error = None;
+        for server_url in server_urls {
+            let url = format!("{}/signer-api/v1/getSignerSideOrder", server_url);
+            match self
+                .http_client
+                .post::<AirswapRfqResponse, _>(&url, &request)
+                .await
+            {
+                Ok(response) => {
+                    return self.parse_rfq_response(response, rfq);
+                }
+                Err(e) => {
+                    last_error = Some(e);
+                }
+            }
+        }
+
+        Err(last_error
+            .unwrap_or_else(|| VenueError::internal_error("No Airswap servers available")))
     }
 
     async fn execute_trade(&self, quote: &Quote) -> VenueResult<ExecutionResult> {
@@ -821,14 +846,43 @@ impl VenueAdapter for AirswapAdapter {
     }
 
     async fn health_check(&self) -> VenueResult<VenueHealth> {
-        // TODO: Check Registry contract and server availability
-        // For now, return healthy if enabled
-        if self.config.is_enabled() {
-            Ok(VenueHealth::healthy(self.config.venue_id().clone()))
+        if !self.config.is_enabled() {
+            return Ok(VenueHealth::unhealthy(
+                self.config.venue_id().clone(),
+                "Adapter is disabled",
+            ));
+        }
+
+        // Check server availability
+        let server_urls = self.config.server_urls();
+        if server_urls.is_empty() {
+            return Ok(VenueHealth::unhealthy(
+                self.config.venue_id().clone(),
+                "No server URLs configured",
+            ));
+        }
+
+        let start = std::time::Instant::now();
+        let mut any_healthy = false;
+
+        for server_url in server_urls {
+            if self.http_client.health_check(server_url).await {
+                any_healthy = true;
+                break;
+            }
+        }
+
+        let latency_ms = start.elapsed().as_millis() as u64;
+
+        if any_healthy {
+            Ok(VenueHealth::healthy_with_latency(
+                self.config.venue_id().clone(),
+                latency_ms,
+            ))
         } else {
             Ok(VenueHealth::unhealthy(
                 self.config.venue_id().clone(),
-                "Adapter is disabled",
+                "All servers unavailable",
             ))
         }
     }
@@ -1003,13 +1057,13 @@ mod tests {
 
         #[test]
         fn new_adapter() {
-            let adapter = AirswapAdapter::new(test_config());
+            let adapter = AirswapAdapter::new(test_config()).unwrap();
             assert_eq!(adapter.config().chain(), AirswapChain::Ethereum);
         }
 
         #[test]
         fn debug_impl() {
-            let adapter = AirswapAdapter::new(test_config());
+            let adapter = AirswapAdapter::new(test_config()).unwrap();
             let debug = format!("{:?}", adapter);
             assert!(debug.contains("AirswapAdapter"));
             assert!(debug.contains("airswap"));
@@ -1017,7 +1071,7 @@ mod tests {
 
         #[test]
         fn next_nonce() {
-            let adapter = AirswapAdapter::new(test_config());
+            let adapter = AirswapAdapter::new(test_config()).unwrap();
             let nonce1 = adapter.next_nonce();
             let nonce2 = adapter.next_nonce();
             let nonce3 = adapter.next_nonce();
@@ -1033,7 +1087,7 @@ mod tests {
 
         #[test]
         fn to_smallest_unit() {
-            let adapter = AirswapAdapter::new(test_config());
+            let adapter = AirswapAdapter::new(test_config()).unwrap();
             let amount = Decimal::from_str("1.5").unwrap();
             let result = adapter.to_smallest_unit(amount, 18);
             assert_eq!(result, "1500000000000000000");
@@ -1041,7 +1095,7 @@ mod tests {
 
         #[test]
         fn to_smallest_unit_6_decimals() {
-            let adapter = AirswapAdapter::new(test_config());
+            let adapter = AirswapAdapter::new(test_config()).unwrap();
             let amount = Decimal::from_str("100.0").unwrap();
             let result = adapter.to_smallest_unit(amount, 6);
             assert_eq!(result, "100000000");
@@ -1081,7 +1135,7 @@ mod tests {
 
         #[test]
         fn calculate_price() {
-            let adapter = AirswapAdapter::new(test_config());
+            let adapter = AirswapAdapter::new(test_config()).unwrap();
             let order = test_order();
             let price = adapter.calculate_price(&order).unwrap();
             // 1000000000000000000 / 2000000000 = 500000000
@@ -1091,14 +1145,14 @@ mod tests {
 
         #[test]
         fn is_order_expired_false() {
-            let adapter = AirswapAdapter::new(test_config());
+            let adapter = AirswapAdapter::new(test_config()).unwrap();
             let order = test_order();
             assert!(!adapter.is_order_expired(&order));
         }
 
         #[test]
         fn is_order_expired_true() {
-            let adapter = AirswapAdapter::new(test_config());
+            let adapter = AirswapAdapter::new(test_config()).unwrap();
             let mut order = test_order();
             order.order.expiry = 1000; // Very old timestamp
             assert!(adapter.is_order_expired(&order));
@@ -1106,7 +1160,7 @@ mod tests {
 
         #[test]
         fn time_to_expiry() {
-            let adapter = AirswapAdapter::new(test_config());
+            let adapter = AirswapAdapter::new(test_config()).unwrap();
             let order = test_order();
             let ttl = adapter.time_to_expiry(&order);
             // Should be around 300 seconds (5 minutes)
@@ -1137,38 +1191,42 @@ mod tests {
         use super::*;
 
         #[tokio::test]
-        async fn health_check_enabled() {
-            let adapter = AirswapAdapter::new(test_config());
+        async fn health_check_disabled() {
+            let config = test_config().with_enabled(false);
+            let adapter = AirswapAdapter::new(config).unwrap();
             let health = adapter.health_check().await.unwrap();
-            assert!(health.is_healthy());
+            assert!(!health.is_healthy());
         }
 
         #[tokio::test]
-        async fn health_check_disabled() {
-            let config = test_config().with_enabled(false);
-            let adapter = AirswapAdapter::new(config);
+        async fn health_check_no_servers() {
+            let config = AirswapConfig::new()
+                .with_chain(AirswapChain::Ethereum)
+                .with_wallet_address("0x1234567890abcdef1234567890abcdef12345678")
+                .with_timeout_ms(3000);
+            let adapter = AirswapAdapter::new(config).unwrap();
             let health = adapter.health_check().await.unwrap();
             assert!(!health.is_healthy());
         }
 
         #[tokio::test]
         async fn is_available() {
-            let adapter = AirswapAdapter::new(test_config());
+            let adapter = AirswapAdapter::new(test_config()).unwrap();
             assert!(adapter.is_available().await);
 
-            let disabled_adapter = AirswapAdapter::new(test_config().with_enabled(false));
+            let disabled_adapter = AirswapAdapter::new(test_config().with_enabled(false)).unwrap();
             assert!(!disabled_adapter.is_available().await);
         }
 
         #[tokio::test]
         async fn venue_id() {
-            let adapter = AirswapAdapter::new(test_config());
+            let adapter = AirswapAdapter::new(test_config()).unwrap();
             assert_eq!(adapter.venue_id(), &VenueId::new("airswap"));
         }
 
         #[tokio::test]
         async fn timeout_ms() {
-            let adapter = AirswapAdapter::new(test_config());
+            let adapter = AirswapAdapter::new(test_config()).unwrap();
             assert_eq!(adapter.timeout_ms(), 3000);
         }
     }
