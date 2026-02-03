@@ -752,17 +752,107 @@ cargo bench
 | **Property Tests** | Proptest-based invariants | 50+ |
 | **Benchmarks** | Performance measurements | 10+ |
 
-### Pre-Push Checks
+### Makefile Commands
+
+The project includes a comprehensive Makefile with all development commands. Run `make help` for the full list.
+
+#### 🔧 Build & Run
 
 ```bash
-# Run all checks
-make pre-push
+make build         # Compile the project
+make release       # Build in release mode
+make run           # Run the main binary
+make run-release   # Run in release mode
+make clean         # Clean build artifacts
+```
 
-# Individual checks
-make fmt       # Format code
-make lint      # Run clippy
-make test      # Run tests
-make doc       # Generate docs
+#### 🧪 Test & Quality
+
+```bash
+make test          # Run all tests
+make test-lib      # Run library tests only
+make test-integration # Run integration tests
+make fmt           # Format code
+make fmt-check     # Check formatting without applying
+make lint          # Run clippy with warnings as errors
+make lint-fix      # Auto-fix lint issues
+make fix           # Auto-fix Rust compiler suggestions
+make check         # Run fmt-check + lint + test
+make pre-push      # Run all pre-push checks
+```
+
+#### 📦 Packaging & Docs
+
+```bash
+make doc           # Generate documentation
+make doc-open      # Build and open Rust documentation
+make doc-check     # Check for missing docs via clippy
+make create-doc    # Generate internal docs
+make readme        # Regenerate README using cargo-readme
+make publish       # Prepare and publish crate to crates.io
+```
+
+#### 📈 Coverage & Benchmarks
+
+```bash
+make coverage            # Generate code coverage report (XML)
+make coverage-html       # Generate HTML coverage report
+make open-coverage       # Open HTML report
+make bench               # Run benchmarks using Criterion
+make bench-show          # Open benchmark report
+make bench-save          # Save benchmark history snapshot
+make bench-compare       # Compare benchmark runs
+make bench-json          # Output benchmarks in JSON
+make bench-clean         # Remove benchmark data
+```
+
+#### 🗄️ Database
+
+```bash
+make migrate         # Run database migrations
+make migrate-new     # Create a new migration
+make migrate-revert  # Revert last migration
+make db-reset        # Reset database (drop, create, migrate)
+```
+
+#### 🐳 Docker
+
+```bash
+make docker-up       # Start Docker services
+make docker-down     # Stop Docker services
+make docker-logs     # Show Docker logs
+make docker-build    # Build Docker image
+make docker-run      # Run Docker container
+```
+
+#### 🧹 Git & Workflow Helpers
+
+```bash
+make git-log             # Show commits on current branch vs main
+make check-spanish       # Check for Spanish words in code
+make zip                 # Create zip without target/ and temp files
+make tree                # Visualize project tree
+make loc                 # Count lines of code
+make deps                # Show dependency tree
+make outdated            # Check for outdated dependencies
+make audit               # Run security audit
+```
+
+#### 🤖 GitHub Actions (via act)
+
+```bash
+make workflow-build      # Simulate build workflow
+make workflow-lint       # Simulate lint workflow
+make workflow-test       # Simulate test workflow
+make workflow-coverage   # Simulate coverage workflow
+make workflow            # Run all workflows
+```
+
+#### 🚀 Release
+
+```bash
+make version         # Show current version
+make tag             # Create git tag from Cargo.toml version
 ```
 
 ---
@@ -783,10 +873,14 @@ make doc       # Generate docs
 
 ```bash
 # Run benchmarks
-cargo bench
+make bench
 
-# Quote aggregation benchmark
-cargo bench --bench quote_aggregation
+# View benchmark report
+make bench-show
+
+# Save baseline and compare
+make bench-save
+make bench-compare
 ```
 
 ### Optimization Features
