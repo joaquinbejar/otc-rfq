@@ -32,8 +32,10 @@ use crate::domain::entities::rfq::Rfq;
 use crate::domain::value_objects::timestamp::Timestamp;
 use crate::domain::value_objects::{Blockchain, OrderSide, Price, VenueId};
 use crate::infrastructure::venues::error::{VenueError, VenueResult};
+use crate::infrastructure::venues::http_client::HttpClient;
 use crate::infrastructure::venues::traits::{ExecutionResult, VenueAdapter, VenueHealth};
 use async_trait::async_trait;
+use reqwest::header::{HeaderMap, HeaderValue};
 use rust_decimal::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -485,21 +487,35 @@ impl BebopConfig {
 /// - Batch swap support
 /// - Quote expiry tracking
 /// - Multi-chain support
-///
-/// # Note
-///
-/// This is a stub implementation. Full HTTP client integration
-/// will be completed with reqwest.
 pub struct BebopAdapter {
     /// Configuration.
     config: BebopConfig,
+    /// HTTP client for API requests.
+    http_client: HttpClient,
 }
 
 impl BebopAdapter {
     /// Creates a new Bebop adapter.
-    #[must_use]
-    pub fn new(config: BebopConfig) -> Self {
-        Self { config }
+    ///
+    /// # Errors
+    ///
+    /// Returns `VenueError::InternalError` if the HTTP client cannot be created.
+    pub fn new(config: BebopConfig) -> VenueResult<Self> {
+        let headers = Self::build_headers(&config)?;
+        let http_client = HttpClient::with_headers(config.timeout_ms(), headers)?;
+        Ok(Self {
+            config,
+            http_client,
+        })
+    }
+
+    /// Builds the default headers for API requests.
+    fn build_headers(config: &BebopConfig) -> VenueResult<HeaderMap> {
+        let mut headers = HeaderMap::new();
+        let api_key = HeaderValue::from_str(config.api_key())
+            .map_err(|_| VenueError::internal_error("Invalid API key format"))?;
+        headers.insert("x-api-key", api_key);
+        Ok(headers)
     }
 
     /// Returns the configuration.
@@ -755,16 +771,16 @@ impl VenueAdapter for BebopAdapter {
         }
 
         // Build quote request
-        let _request = self.build_quote_request(rfq)?;
+        let request = self.build_quote_request(rfq)?;
 
         // Build quote URL
-        let _url = self.config.quote_url();
+        let url = self.config.quote_url();
 
-        // TODO: Make HTTP request to Bebop API
-        // For now, return a stub error indicating not implemented
-        Err(VenueError::internal_error(
-            "Bebop API integration not yet implemented - requires HTTP client",
-        ))
+        // Make HTTP POST request to Bebop API
+        let response: BebopQuoteResponse = self.http_client.post(&url, &request).await?;
+
+        // Parse response into Quote
+        self.parse_quote_response(response, rfq)
     }
 
     async fn execute_trade(&self, quote: &Quote) -> VenueResult<ExecutionResult> {
@@ -799,14 +815,28 @@ impl VenueAdapter for BebopAdapter {
     }
 
     async fn health_check(&self) -> VenueResult<VenueHealth> {
-        // TODO: Make health check request to Bebop API
-        // For now, return healthy if enabled
-        if self.config.is_enabled() {
-            Ok(VenueHealth::healthy(self.config.venue_id().clone()))
+        if !self.config.is_enabled() {
+            return Ok(VenueHealth::unhealthy(
+                self.config.venue_id().clone(),
+                "Adapter is disabled",
+            ));
+        }
+
+        // Check API availability
+        let url = format!("{}/health", BASE_URL);
+        let start = std::time::Instant::now();
+        let is_healthy = self.http_client.health_check(&url).await;
+        let latency_ms = start.elapsed().as_millis() as u64;
+
+        if is_healthy {
+            Ok(VenueHealth::healthy_with_latency(
+                self.config.venue_id().clone(),
+                latency_ms,
+            ))
         } else {
             Ok(VenueHealth::unhealthy(
                 self.config.venue_id().clone(),
-                "Adapter is disabled",
+                "API health check failed",
             ))
         }
     }
@@ -969,13 +999,13 @@ mod tests {
 
         #[test]
         fn new_adapter() {
-            let adapter = BebopAdapter::new(test_config());
+            let adapter = BebopAdapter::new(test_config()).unwrap();
             assert_eq!(adapter.config().api_key(), "test-api-key");
         }
 
         #[test]
         fn debug_impl() {
-            let adapter = BebopAdapter::new(test_config());
+            let adapter = BebopAdapter::new(test_config()).unwrap();
             let debug = format!("{:?}", adapter);
             assert!(debug.contains("BebopAdapter"));
             assert!(debug.contains("bebop"));
@@ -983,7 +1013,7 @@ mod tests {
 
         #[test]
         fn to_smallest_unit() {
-            let adapter = BebopAdapter::new(test_config());
+            let adapter = BebopAdapter::new(test_config()).unwrap();
             let amount = Decimal::from_str("1.5").unwrap();
             let result = adapter.to_smallest_unit(amount, 18);
             assert_eq!(result, "1500000000000000000");
@@ -991,7 +1021,7 @@ mod tests {
 
         #[test]
         fn to_smallest_unit_6_decimals() {
-            let adapter = BebopAdapter::new(test_config());
+            let adapter = BebopAdapter::new(test_config()).unwrap();
             let amount = Decimal::from_str("100.0").unwrap();
             let result = adapter.to_smallest_unit(amount, 6);
             assert_eq!(result, "100000000");
@@ -1023,7 +1053,7 @@ mod tests {
 
         #[test]
         fn calculate_price() {
-            let adapter = BebopAdapter::new(test_config());
+            let adapter = BebopAdapter::new(test_config()).unwrap();
             let quote = test_quote_data();
             let price = adapter.calculate_price(&quote).unwrap();
             // 500000000000000000 / 1000000000 = 500000000.0
@@ -1034,14 +1064,14 @@ mod tests {
 
         #[test]
         fn is_quote_expired_false() {
-            let adapter = BebopAdapter::new(test_config());
+            let adapter = BebopAdapter::new(test_config()).unwrap();
             let quote = test_quote_data();
             assert!(!adapter.is_quote_expired(&quote));
         }
 
         #[test]
         fn is_quote_expired_true() {
-            let adapter = BebopAdapter::new(test_config());
+            let adapter = BebopAdapter::new(test_config()).unwrap();
             let mut quote = test_quote_data();
             quote.expiry = 1000; // Very old timestamp
             assert!(adapter.is_quote_expired(&quote));
@@ -1049,7 +1079,7 @@ mod tests {
 
         #[test]
         fn time_to_expiry() {
-            let adapter = BebopAdapter::new(test_config());
+            let adapter = BebopAdapter::new(test_config()).unwrap();
             let quote = test_quote_data();
             let ttl = adapter.time_to_expiry(&quote);
             // Should be around 60 seconds
@@ -1061,38 +1091,31 @@ mod tests {
         use super::*;
 
         #[tokio::test]
-        async fn health_check_enabled() {
-            let adapter = BebopAdapter::new(test_config());
-            let health = adapter.health_check().await.unwrap();
-            assert!(health.is_healthy());
-        }
-
-        #[tokio::test]
         async fn health_check_disabled() {
             let config = test_config().with_enabled(false);
-            let adapter = BebopAdapter::new(config);
+            let adapter = BebopAdapter::new(config).unwrap();
             let health = adapter.health_check().await.unwrap();
             assert!(!health.is_healthy());
         }
 
         #[tokio::test]
         async fn is_available() {
-            let adapter = BebopAdapter::new(test_config());
+            let adapter = BebopAdapter::new(test_config()).unwrap();
             assert!(adapter.is_available().await);
 
-            let disabled_adapter = BebopAdapter::new(test_config().with_enabled(false));
+            let disabled_adapter = BebopAdapter::new(test_config().with_enabled(false)).unwrap();
             assert!(!disabled_adapter.is_available().await);
         }
 
         #[tokio::test]
         async fn venue_id() {
-            let adapter = BebopAdapter::new(test_config());
+            let adapter = BebopAdapter::new(test_config()).unwrap();
             assert_eq!(adapter.venue_id(), &VenueId::new("bebop"));
         }
 
         #[tokio::test]
         async fn timeout_ms() {
-            let adapter = BebopAdapter::new(test_config());
+            let adapter = BebopAdapter::new(test_config()).unwrap();
             assert_eq!(adapter.timeout_ms(), 3000);
         }
     }

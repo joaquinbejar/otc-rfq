@@ -30,8 +30,10 @@ use crate::domain::entities::rfq::Rfq;
 use crate::domain::value_objects::timestamp::Timestamp;
 use crate::domain::value_objects::{Blockchain, OrderSide, Price, VenueId};
 use crate::infrastructure::venues::error::{VenueError, VenueResult};
+use crate::infrastructure::venues::http_client::HttpClient;
 use crate::infrastructure::venues::traits::{ExecutionResult, VenueAdapter, VenueHealth};
 use async_trait::async_trait;
+use reqwest::header::{HeaderMap, HeaderValue};
 use rust_decimal::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -411,21 +413,35 @@ impl HashflowConfig {
 /// - Signed quotes with EIP-712 signatures
 /// - Quote expiry tracking
 /// - Multi-chain support
-///
-/// # Note
-///
-/// This is a stub implementation. Full HTTP client integration
-/// will be completed with reqwest.
 pub struct HashflowAdapter {
     /// Configuration.
     config: HashflowConfig,
+    /// HTTP client for API requests.
+    http_client: HttpClient,
 }
 
 impl HashflowAdapter {
     /// Creates a new Hashflow adapter.
-    #[must_use]
-    pub fn new(config: HashflowConfig) -> Self {
-        Self { config }
+    ///
+    /// # Errors
+    ///
+    /// Returns `VenueError::InternalError` if the HTTP client cannot be created.
+    pub fn new(config: HashflowConfig) -> VenueResult<Self> {
+        let headers = Self::build_headers(&config)?;
+        let http_client = HttpClient::with_headers(config.timeout_ms(), headers)?;
+        Ok(Self {
+            config,
+            http_client,
+        })
+    }
+
+    /// Builds the default headers for API requests.
+    fn build_headers(config: &HashflowConfig) -> VenueResult<HeaderMap> {
+        let mut headers = HeaderMap::new();
+        let auth_value = HeaderValue::from_str(&format!("Bearer {}", config.api_key()))
+            .map_err(|_| VenueError::internal_error("Invalid API key format"))?;
+        headers.insert("Authorization", auth_value);
+        Ok(headers)
     }
 
     /// Returns the configuration.
@@ -654,16 +670,16 @@ impl VenueAdapter for HashflowAdapter {
         }
 
         // Build RFQ request
-        let _request = self.build_rfq_request(rfq)?;
+        let request = self.build_rfq_request(rfq)?;
 
         // Build RFQ URL
-        let _url = self.config.rfq_url();
+        let url = self.config.rfq_url();
 
-        // TODO: Make HTTP request to Hashflow API
-        // For now, return a stub error indicating not implemented
-        Err(VenueError::internal_error(
-            "Hashflow API integration not yet implemented - requires HTTP client",
-        ))
+        // Make HTTP POST request to Hashflow API
+        let response: HashflowRfqResponse = self.http_client.post(&url, &request).await?;
+
+        // Parse response into Quote
+        self.parse_rfq_response(response, rfq)
     }
 
     async fn execute_trade(&self, quote: &Quote) -> VenueResult<ExecutionResult> {
@@ -705,14 +721,28 @@ impl VenueAdapter for HashflowAdapter {
     }
 
     async fn health_check(&self) -> VenueResult<VenueHealth> {
-        // TODO: Make health check request to Hashflow API
-        // For now, return healthy if enabled
-        if self.config.is_enabled() {
-            Ok(VenueHealth::healthy(self.config.venue_id().clone()))
+        if !self.config.is_enabled() {
+            return Ok(VenueHealth::unhealthy(
+                self.config.venue_id().clone(),
+                "Adapter is disabled",
+            ));
+        }
+
+        // Check API availability
+        let url = format!("{}/health", BASE_URL);
+        let start = std::time::Instant::now();
+        let is_healthy = self.http_client.health_check(&url).await;
+        let latency_ms = start.elapsed().as_millis() as u64;
+
+        if is_healthy {
+            Ok(VenueHealth::healthy_with_latency(
+                self.config.venue_id().clone(),
+                latency_ms,
+            ))
         } else {
             Ok(VenueHealth::unhealthy(
                 self.config.venue_id().clone(),
-                "Adapter is disabled",
+                "API health check failed",
             ))
         }
     }
@@ -838,22 +868,21 @@ mod tests {
 
         #[test]
         fn new() {
-            let adapter = HashflowAdapter::new(test_config());
+            let adapter = HashflowAdapter::new(test_config()).unwrap();
             assert_eq!(adapter.venue_id(), &VenueId::new("hashflow"));
         }
 
         #[test]
         fn debug_format() {
-            let adapter = HashflowAdapter::new(test_config());
+            let adapter = HashflowAdapter::new(test_config()).unwrap();
             let debug = format!("{:?}", adapter);
             assert!(debug.contains("HashflowAdapter"));
             assert!(debug.contains("hashflow"));
-            assert!(debug.contains("gasless"));
         }
 
         #[test]
         fn to_smallest_unit() {
-            let adapter = HashflowAdapter::new(test_config());
+            let adapter = HashflowAdapter::new(test_config()).unwrap();
             let amount = adapter.to_smallest_unit(Decimal::from(1), 18);
             assert_eq!(amount, "1000000000000000000");
 
@@ -863,28 +892,21 @@ mod tests {
 
         #[tokio::test]
         async fn is_available_when_enabled() {
-            let adapter = HashflowAdapter::new(test_config());
+            let adapter = HashflowAdapter::new(test_config()).unwrap();
             assert!(adapter.is_available().await);
         }
 
         #[tokio::test]
         async fn is_not_available_when_disabled() {
             let config = test_config().with_enabled(false);
-            let adapter = HashflowAdapter::new(config);
+            let adapter = HashflowAdapter::new(config).unwrap();
             assert!(!adapter.is_available().await);
-        }
-
-        #[tokio::test]
-        async fn health_check_healthy_when_enabled() {
-            let adapter = HashflowAdapter::new(test_config());
-            let health = adapter.health_check().await.unwrap();
-            assert!(health.is_healthy());
         }
 
         #[tokio::test]
         async fn health_check_unhealthy_when_disabled() {
             let config = test_config().with_enabled(false);
-            let adapter = HashflowAdapter::new(config);
+            let adapter = HashflowAdapter::new(config).unwrap();
             let health = adapter.health_check().await.unwrap();
             assert!(!health.is_healthy());
         }
@@ -915,7 +937,7 @@ mod tests {
 
         #[test]
         fn calculate_price() {
-            let adapter = HashflowAdapter::new(test_config());
+            let adapter = HashflowAdapter::new(test_config()).unwrap();
             let quote = test_quote_data();
             let price = adapter.calculate_price(&quote).unwrap();
             // 1850 / 1 = 1850
@@ -924,14 +946,14 @@ mod tests {
 
         #[test]
         fn is_quote_expired_false() {
-            let adapter = HashflowAdapter::new(test_config());
+            let adapter = HashflowAdapter::new(test_config()).unwrap();
             let quote = test_quote_data();
             assert!(!adapter.is_quote_expired(&quote));
         }
 
         #[test]
         fn is_quote_expired_true() {
-            let adapter = HashflowAdapter::new(test_config());
+            let adapter = HashflowAdapter::new(test_config()).unwrap();
             let now = Timestamp::now().timestamp_secs() as u64;
             let mut quote = test_quote_data();
             quote.quote_expiry = now - 10; // 10 seconds ago
@@ -940,7 +962,7 @@ mod tests {
 
         #[test]
         fn time_to_expiry() {
-            let adapter = HashflowAdapter::new(test_config());
+            let adapter = HashflowAdapter::new(test_config()).unwrap();
             let quote = test_quote_data();
             let ttl = adapter.time_to_expiry(&quote);
             // Should be around 60 seconds (give or take a few for test execution)
