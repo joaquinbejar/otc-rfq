@@ -46,11 +46,13 @@ use crate::infrastructure::venues::error::{VenueError, VenueResult};
 use crate::infrastructure::venues::fix_config::FixMMConfig;
 use crate::infrastructure::venues::traits::{ExecutionResult, VenueAdapter, VenueHealth};
 use async_trait::async_trait;
+use ironfix_core::message::{OwnedMessage, RawMessage};
+use ironfix_engine::application::{Application, RejectReason, SessionId};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tokio::sync::{RwLock, oneshot};
+use tokio::sync::{RwLock, mpsc, oneshot};
 
 // Re-export IronFix types for external use
 pub use ironfix_tagvalue::Encoder as FixEncoder;
@@ -173,6 +175,297 @@ pub mod ord_status {
     pub const REJECTED: &str = "8";
 }
 
+/// Outgoing message to be sent via the FIX engine.
+#[derive(Debug, Clone)]
+pub struct OutgoingMessage {
+    /// The encoded FIX message bytes.
+    pub data: bytes::BytesMut,
+    /// The message type.
+    pub msg_type: String,
+}
+
+impl OutgoingMessage {
+    /// Creates a new outgoing message.
+    #[must_use]
+    pub fn new(data: bytes::BytesMut, msg_type: impl Into<String>) -> Self {
+        Self {
+            data,
+            msg_type: msg_type.into(),
+        }
+    }
+}
+
+/// FIX Application callback handler for the IronFix engine.
+///
+/// Implements the [`Application`] trait to handle FIX session events
+/// and route incoming messages to the appropriate handlers.
+pub struct FixApplication {
+    /// Session state reference.
+    session_state: Arc<RwLock<SessionState>>,
+    /// Pending quote requests.
+    pending_quotes: Arc<RwLock<HashMap<String, PendingQuoteRequest>>>,
+    /// Pending orders.
+    pending_orders: Arc<RwLock<HashMap<String, PendingOrder>>>,
+    /// Venue ID for logging.
+    venue_id: VenueId,
+}
+
+impl FixApplication {
+    /// Creates a new FIX application handler.
+    ///
+    /// This is an internal constructor used by [`FixMMAdapter::with_engine`].
+    #[must_use]
+    pub(crate) fn new(
+        session_state: Arc<RwLock<SessionState>>,
+        pending_quotes: Arc<RwLock<HashMap<String, PendingQuoteRequest>>>,
+        pending_orders: Arc<RwLock<HashMap<String, PendingOrder>>>,
+        venue_id: VenueId,
+    ) -> Self {
+        Self {
+            session_state,
+            pending_quotes,
+            pending_orders,
+            venue_id,
+        }
+    }
+
+    /// Extracts a field value from a raw FIX message as an owned String.
+    fn extract_field(message: &RawMessage<'_>, tag: u32) -> Option<String> {
+        message.get_field_str(tag).map(|s| s.to_string())
+    }
+
+    /// Handles an incoming Quote message.
+    async fn handle_quote(&self, message: &RawMessage<'_>) {
+        let quote_req_id = Self::extract_field(message, tags::QUOTE_REQ_ID);
+
+        if let Some(req_id) = quote_req_id {
+            let mut pending = self.pending_quotes.write().await;
+            if let Some(request) = pending.remove(&req_id) {
+                // Parse quote fields
+                let quote_id = Self::extract_field(message, tags::QUOTE_ID);
+                let bid_px = Self::extract_field(message, tags::BID_PX);
+                let offer_px = Self::extract_field(message, tags::OFFER_PX);
+                let _valid_until = Self::extract_field(message, tags::VALID_UNTIL_TIME);
+
+                tracing::debug!(
+                    venue = %self.venue_id,
+                    quote_req_id = %req_id,
+                    quote_id = ?quote_id,
+                    bid_px = ?bid_px,
+                    offer_px = ?offer_px,
+                    "Received Quote response"
+                );
+
+                // For now, send an error since we need the RFQ to build the quote
+                // In a full implementation, we'd store the RFQ with the pending request
+                let _ = request.response_tx.send(Err(VenueError::internal_error(
+                    "Quote parsing requires RFQ context - not yet implemented",
+                )));
+            }
+        }
+    }
+
+    /// Handles an incoming ExecutionReport message.
+    async fn handle_execution_report(&self, message: &RawMessage<'_>) {
+        let cl_ord_id = Self::extract_field(message, tags::CL_ORD_ID);
+
+        if let Some(ord_id) = cl_ord_id {
+            let mut pending = self.pending_orders.write().await;
+            if let Some(order) = pending.remove(&ord_id) {
+                let exec_type = Self::extract_field(message, tags::EXEC_TYPE);
+                let ord_status = Self::extract_field(message, tags::ORD_STATUS);
+                let exec_id = Self::extract_field(message, tags::EXEC_ID);
+                let last_px = Self::extract_field(message, tags::LAST_PX);
+                let last_qty = Self::extract_field(message, tags::LAST_QTY);
+
+                tracing::debug!(
+                    venue = %self.venue_id,
+                    cl_ord_id = %ord_id,
+                    exec_type = ?exec_type,
+                    ord_status = ?ord_status,
+                    exec_id = ?exec_id,
+                    "Received ExecutionReport"
+                );
+
+                // Check if order was filled or rejected
+                match ord_status.as_deref() {
+                    Some(ord_status::FILLED) => {
+                        // Parse execution details
+                        let price = last_px
+                            .and_then(|p| p.parse::<f64>().ok())
+                            .and_then(|p| Price::new(p).ok());
+
+                        if let Some(price) = price {
+                            let result = ExecutionResult::new(
+                                order.quote_id,
+                                self.venue_id.clone(),
+                                price,
+                                crate::domain::value_objects::Quantity::new(
+                                    last_qty.and_then(|q| q.parse().ok()).unwrap_or(0.0),
+                                )
+                                .unwrap_or_else(|_| {
+                                    crate::domain::value_objects::Quantity::zero()
+                                }),
+                                SettlementMethod::OffChain,
+                            )
+                            .with_venue_execution_id(
+                                exec_id.unwrap_or_else(|| "unknown".to_string()),
+                            );
+                            let _ = order.response_tx.send(Ok(result));
+                        } else {
+                            let _ = order.response_tx.send(Err(VenueError::protocol_error(
+                                "Invalid price in ExecutionReport",
+                            )));
+                        }
+                    }
+                    Some(ord_status::REJECTED) => {
+                        let text = Self::extract_field(message, tags::TEXT)
+                            .unwrap_or_else(|| "Order rejected".to_string());
+                        let _ = order
+                            .response_tx
+                            .send(Err(VenueError::execution_failed(text)));
+                    }
+                    _ => {
+                        // Other status - wait for final state
+                        tracing::debug!(
+                            venue = %self.venue_id,
+                            cl_ord_id = %ord_id,
+                            ord_status = ?ord_status,
+                            "Received non-final ExecutionReport, waiting for fill/reject"
+                        );
+                        // Re-insert the pending order to wait for final state
+                        pending.insert(ord_id.to_string(), order);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Handles a QuoteRequestReject message.
+    async fn handle_quote_reject(&self, message: &RawMessage<'_>) {
+        let quote_req_id = Self::extract_field(message, tags::QUOTE_REQ_ID);
+        let text = Self::extract_field(message, tags::TEXT)
+            .unwrap_or_else(|| "Quote request rejected".to_string());
+
+        if let Some(req_id) = quote_req_id {
+            let mut pending = self.pending_quotes.write().await;
+            if let Some(request) = pending.remove(&req_id) {
+                tracing::warn!(
+                    venue = %self.venue_id,
+                    quote_req_id = %req_id,
+                    reason = %text,
+                    "Quote request rejected"
+                );
+                let _ = request
+                    .response_tx
+                    .send(Err(VenueError::quote_unavailable(text)));
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl Application for FixApplication {
+    async fn on_create(&self, session_id: &SessionId) {
+        tracing::info!(
+            venue = %self.venue_id,
+            session = %session_id,
+            "FIX session created"
+        );
+    }
+
+    async fn on_logon(&self, session_id: &SessionId) {
+        tracing::info!(
+            venue = %self.venue_id,
+            session = %session_id,
+            "FIX session logged on"
+        );
+        let mut state = self.session_state.write().await;
+        *state = SessionState::LoggedOn;
+    }
+
+    async fn on_logout(&self, session_id: &SessionId) {
+        tracing::info!(
+            venue = %self.venue_id,
+            session = %session_id,
+            "FIX session logged out"
+        );
+        let mut state = self.session_state.write().await;
+        *state = SessionState::Disconnected;
+    }
+
+    async fn to_admin(&self, _message: &mut OwnedMessage, _session_id: &SessionId) {
+        // No modification needed for admin messages
+    }
+
+    async fn from_admin(
+        &self,
+        _message: &RawMessage<'_>,
+        _session_id: &SessionId,
+    ) -> Result<(), RejectReason> {
+        // Accept all admin messages
+        Ok(())
+    }
+
+    async fn to_app(&self, _message: &mut OwnedMessage, _session_id: &SessionId) {
+        // No modification needed for outgoing app messages
+    }
+
+    async fn from_app(
+        &self,
+        message: &RawMessage<'_>,
+        session_id: &SessionId,
+    ) -> Result<(), RejectReason> {
+        // Get message type
+        let msg_type = Self::extract_field(message, 35);
+
+        tracing::debug!(
+            venue = %self.venue_id,
+            session = %session_id,
+            msg_type = ?msg_type,
+            "Received application message"
+        );
+
+        match msg_type.as_deref() {
+            Some(msg_type::QUOTE) => {
+                self.handle_quote(message).await;
+            }
+            Some(msg_type::EXECUTION_REPORT) => {
+                self.handle_execution_report(message).await;
+            }
+            Some(msg_type::QUOTE_REQUEST_REJECT) => {
+                self.handle_quote_reject(message).await;
+            }
+            Some(msg_type::REJECT) => {
+                let text = Self::extract_field(message, tags::TEXT)
+                    .unwrap_or_else(|| "Message rejected".to_string());
+                tracing::warn!(
+                    venue = %self.venue_id,
+                    reason = %text,
+                    "FIX message rejected"
+                );
+            }
+            _ => {
+                tracing::debug!(
+                    venue = %self.venue_id,
+                    msg_type = ?msg_type,
+                    "Unhandled message type"
+                );
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl fmt::Debug for FixApplication {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FixApplication")
+            .field("venue_id", &self.venue_id)
+            .finish()
+    }
+}
+
 /// Session state for the FIX connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionState {
@@ -205,7 +498,7 @@ impl fmt::Display for SessionState {
 
 /// Pending quote request awaiting response.
 #[allow(dead_code)]
-struct PendingQuoteRequest {
+pub(crate) struct PendingQuoteRequest {
     /// Channel to send the response.
     response_tx: oneshot::Sender<VenueResult<Quote>>,
     /// The original RFQ.
@@ -216,7 +509,7 @@ struct PendingQuoteRequest {
 
 /// Pending order awaiting execution report.
 #[allow(dead_code)]
-struct PendingOrder {
+pub(crate) struct PendingOrder {
     /// Channel to send the response.
     response_tx: oneshot::Sender<VenueResult<ExecutionResult>>,
     /// The quote being executed.
@@ -231,8 +524,8 @@ struct PendingOrder {
 ///
 /// # Note
 ///
-/// This is a stub implementation. The actual FIX engine integration
-/// (IronFix) will be added when the library is ready.
+/// This adapter integrates with the IronFix engine for FIX protocol
+/// message encoding and session management.
 pub struct FixMMAdapter {
     /// Configuration.
     config: FixMMConfig,
@@ -244,6 +537,11 @@ pub struct FixMMAdapter {
     pending_quotes: Arc<RwLock<HashMap<String, PendingQuoteRequest>>>,
     /// Pending orders.
     pending_orders: Arc<RwLock<HashMap<String, PendingOrder>>>,
+    /// Message sender channel for outgoing FIX messages.
+    message_tx: Option<mpsc::Sender<OutgoingMessage>>,
+    /// FIX application handler for callbacks.
+    #[allow(dead_code)]
+    application: Option<Arc<FixApplication>>,
 }
 
 impl FixMMAdapter {
@@ -256,7 +554,80 @@ impl FixMMAdapter {
             seq_num: AtomicU64::new(1),
             pending_quotes: Arc::new(RwLock::new(HashMap::new())),
             pending_orders: Arc::new(RwLock::new(HashMap::new())),
+            message_tx: None,
+            application: None,
         }
+    }
+
+    /// Creates a new FIX MM adapter with an engine message channel.
+    ///
+    /// This constructor sets up the adapter with a message sender channel
+    /// for sending FIX messages via the IronFix engine.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - The FIX adapter configuration.
+    /// * `message_tx` - Channel sender for outgoing FIX messages.
+    ///
+    /// # Returns
+    ///
+    /// A tuple of (adapter, application) where the application should be
+    /// registered with the IronFix engine.
+    #[must_use]
+    pub fn with_engine(
+        config: FixMMConfig,
+        message_tx: mpsc::Sender<OutgoingMessage>,
+    ) -> (Self, Arc<FixApplication>) {
+        let session_state = Arc::new(RwLock::new(SessionState::Disconnected));
+        let pending_quotes = Arc::new(RwLock::new(HashMap::new()));
+        let pending_orders = Arc::new(RwLock::new(HashMap::new()));
+
+        let application = Arc::new(FixApplication::new(
+            Arc::clone(&session_state),
+            Arc::clone(&pending_quotes),
+            Arc::clone(&pending_orders),
+            config.venue_id().clone(),
+        ));
+
+        let adapter = Self {
+            config,
+            session_state,
+            seq_num: AtomicU64::new(1),
+            pending_quotes,
+            pending_orders,
+            message_tx: Some(message_tx),
+            application: Some(Arc::clone(&application)),
+        };
+
+        (adapter, application)
+    }
+
+    /// Sends a FIX message via the engine.
+    ///
+    /// # Arguments
+    ///
+    /// * `message` - The encoded FIX message to send.
+    ///
+    /// # Errors
+    ///
+    /// Returns `VenueError::InternalError` if no engine is configured or send fails.
+    pub async fn send_message(&self, message: OutgoingMessage) -> VenueResult<()> {
+        let tx = self
+            .message_tx
+            .as_ref()
+            .ok_or_else(|| VenueError::internal_error("FIX engine not configured"))?;
+
+        tx.send(message).await.map_err(|e| {
+            VenueError::internal_error(format!("Failed to send FIX message: {}", e))
+        })?;
+
+        Ok(())
+    }
+
+    /// Checks if the engine is configured.
+    #[must_use]
+    pub fn has_engine(&self) -> bool {
+        self.message_tx.is_some()
     }
 
     /// Returns the configuration.
@@ -618,10 +989,24 @@ impl VenueAdapter for FixMMAdapter {
             );
         }
 
-        // Build and send QuoteRequest message
-        let _fields = self.build_quote_request(rfq, &quote_req_id);
-        // TODO: Send via IronFix engine
-        // self.engine.send(msg_type::QUOTE_REQUEST, fields).await?;
+        // Build and send QuoteRequest message via IronFix engine
+        let message_data = self.encode_quote_request(rfq, &quote_req_id);
+        let outgoing = OutgoingMessage::new(message_data, msg_type::QUOTE_REQUEST);
+
+        if self.has_engine() {
+            self.send_message(outgoing).await?;
+            tracing::debug!(
+                venue = %self.config.venue_id(),
+                quote_req_id = %quote_req_id,
+                "Sent QuoteRequest via IronFix engine"
+            );
+        } else {
+            tracing::debug!(
+                venue = %self.config.venue_id(),
+                quote_req_id = %quote_req_id,
+                "QuoteRequest encoded (no engine configured)"
+            );
+        }
 
         // Wait for response with timeout
         let timeout = tokio::time::Duration::from_millis(self.config.quote_timeout_ms());
@@ -696,10 +1081,36 @@ impl VenueAdapter for FixMMAdapter {
             );
         }
 
-        // Build and send NewOrderSingle message
-        let _fields = self.build_new_order_single(quote, &cl_ord_id, &venue_quote_id);
-        // TODO: Send via IronFix engine
-        // self.engine.send(msg_type::NEW_ORDER_SINGLE, fields).await?;
+        // Build and send NewOrderSingle message via IronFix engine
+        // Extract symbol and side from quote metadata or use defaults
+        let symbol = quote
+            .metadata()
+            .and_then(|m| m.get("symbol"))
+            .map_or("BTC/USD", |v| v.as_str());
+        let side = quote
+            .metadata()
+            .and_then(|m| m.get("side"))
+            .and_then(|s| Self::fix_to_side(s))
+            .unwrap_or(OrderSide::Buy);
+
+        let message_data =
+            self.encode_new_order_single(quote, &cl_ord_id, &venue_quote_id, symbol, side);
+        let outgoing = OutgoingMessage::new(message_data, msg_type::NEW_ORDER_SINGLE);
+
+        if self.has_engine() {
+            self.send_message(outgoing).await?;
+            tracing::debug!(
+                venue = %self.config.venue_id(),
+                cl_ord_id = %cl_ord_id,
+                "Sent NewOrderSingle via IronFix engine"
+            );
+        } else {
+            tracing::debug!(
+                venue = %self.config.venue_id(),
+                cl_ord_id = %cl_ord_id,
+                "NewOrderSingle encoded (no engine configured)"
+            );
+        }
 
         // Wait for response with timeout
         let timeout = tokio::time::Duration::from_millis(self.config.execution_timeout_ms());
