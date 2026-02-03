@@ -20,9 +20,10 @@
 //!
 //! ## IronFix Integration
 //!
-//! The FIX adapter uses IronFix for protocol encoding:
+//! The FIX adapter uses IronFix for protocol encoding and session management:
 //! - [`fix_adapter::FixEncoder`]: Re-exported `ironfix_tagvalue::Encoder`
 //! - [`fix_messages`]: Type-safe FIX message builders
+//! - [`fix_session`]: Session management with sequence and heartbeat handling
 //!
 //! ## Implementations
 //!
@@ -30,12 +31,14 @@
 //! - `rfq_protocols`: RFQ protocol adapters (Hashflow, Bebop)
 //! - `internal_mm`: Internal market maker adapter
 //! - `fix_adapter`: FIX protocol adapter with IronFix encoding
+//! - `fix_session`: FIX session management with IronFix
 
 pub mod dex;
 pub mod error;
 pub mod fix_adapter;
 pub mod fix_config;
 pub mod fix_messages;
+pub mod fix_session;
 pub mod fix_simulator;
 pub mod internal_mm;
 pub mod registry;
@@ -48,6 +51,7 @@ mod tests;
 pub use error::{VenueError, VenueResult};
 pub use fix_adapter::{FixMMAdapter, SessionState};
 pub use fix_config::{FixMMConfig, FixSessionConfig, FixVersion, LogonCredentials, TlsConfig};
+pub use fix_session::{FixSession, FixSessionState};
 pub use internal_mm::{InternalMMAdapter, InternalMMConfig};
 pub use registry::{VenueConfig, VenueRegistry};
 pub use traits::{ExecutionResult, VenueAdapter, VenueHealth, VenueHealthStatus};
