@@ -1,6 +1,6 @@
 //! # DEX Adapters
 //!
-//! Adapters for DEX aggregators and protocols like 0x, 1inch, Paraswap, and Uniswap V3.
+//! Adapters for DEX aggregators and protocols like 0x, 1inch, Paraswap, Uniswap V3, and Curve.
 //!
 //! ## Available Adapters
 //!
@@ -8,6 +8,7 @@
 //! - [`OneInchAdapter`]: 1inch DEX aggregator
 //! - [`ParaswapAdapter`]: Paraswap DEX aggregator
 //! - [`UniswapV3Adapter`]: Uniswap V3 concentrated liquidity DEX
+//! - [`CurveAdapter`]: Curve Finance StableSwap and CryptoSwap DEX
 //!
 //! ## Multi-Chain Support
 //!
@@ -22,11 +23,16 @@
 //! - Gnosis (1inch only)
 //! - Fantom (1inch, Paraswap)
 
+pub mod curve;
 pub mod one_inch;
 pub mod paraswap;
 pub mod uniswap_v3;
 pub mod zero_x;
 
+pub use curve::{
+    CurveAdapter, CurveChain, CurveConfig, CurvePoolInfo, CurvePoolType, CurveQuoteResult,
+    CurveSwapRoute,
+};
 pub use one_inch::{
     OneInchAdapter, OneInchChain, OneInchConfig, OneInchQuoteResponse, OneInchSwapResponse,
 };
