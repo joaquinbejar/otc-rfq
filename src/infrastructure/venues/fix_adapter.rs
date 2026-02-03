@@ -303,9 +303,7 @@ impl FixApplication {
                                 crate::domain::value_objects::Quantity::new(
                                     last_qty.and_then(|q| q.parse().ok()).unwrap_or(0.0),
                                 )
-                                .unwrap_or_else(|_| {
-                                    crate::domain::value_objects::Quantity::zero()
-                                }),
+                                .unwrap_or_else(|_| crate::domain::value_objects::Quantity::zero()),
                                 SettlementMethod::OffChain,
                             )
                             .with_venue_execution_id(
