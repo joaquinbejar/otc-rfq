@@ -30,9 +30,11 @@ use crate::domain::entities::quote::{Quote, QuoteBuilder, QuoteMetadata};
 use crate::domain::entities::rfq::Rfq;
 use crate::domain::value_objects::timestamp::Timestamp;
 use crate::domain::value_objects::{Blockchain, OrderSide, Price, VenueId};
+use crate::infrastructure::venues::contract_client::ContractClient;
 use crate::infrastructure::venues::error::{VenueError, VenueResult};
 use crate::infrastructure::venues::traits::{ExecutionResult, VenueAdapter, VenueHealth};
 use async_trait::async_trait;
+use ethers::prelude::*;
 use ethers::utils::hex;
 use rust_decimal::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -633,21 +635,25 @@ impl UniswapV3Config {
 /// - Slippage protection
 /// - Gas estimation
 /// - Multi-hop routing
-///
-/// # Note
-///
-/// This is a stub implementation. Full contract integration
-/// will be completed with ethers-rs.
 pub struct UniswapV3Adapter {
     /// Configuration.
     config: UniswapV3Config,
+    /// Contract client for RPC calls.
+    contract_client: ContractClient,
 }
 
 impl UniswapV3Adapter {
     /// Creates a new Uniswap V3 adapter.
-    #[must_use]
-    pub fn new(config: UniswapV3Config) -> Self {
-        Self { config }
+    ///
+    /// # Errors
+    ///
+    /// Returns `VenueError::Connection` if the RPC provider cannot be created.
+    pub fn new(config: UniswapV3Config) -> VenueResult<Self> {
+        let contract_client = ContractClient::new(config.rpc_url(), config.timeout_ms())?;
+        Ok(Self {
+            config,
+            contract_client,
+        })
     }
 
     /// Returns the configuration.
@@ -823,6 +829,57 @@ impl UniswapV3Adapter {
 
         Ok(())
     }
+
+    /// Encodes the quoteExactInputSingle call for QuoterV2.
+    ///
+    /// Function signature: quoteExactInputSingle(QuoteExactInputSingleParams)
+    /// where QuoteExactInputSingleParams is (address tokenIn, address tokenOut, uint256 amountIn, uint24 fee, uint160 sqrtPriceLimitX96)
+    fn encode_quote_exact_input_single(
+        &self,
+        token_in: Address,
+        token_out: Address,
+        amount_in: U256,
+        fee: u32,
+        sqrt_price_limit: U256,
+    ) -> Bytes {
+        // Function selector for quoteExactInputSingle((address,address,uint256,uint24,uint160))
+        // keccak256("quoteExactInputSingle((address,address,uint256,uint24,uint160))")[0:4]
+        let selector: [u8; 4] = [0xc6, 0xa5, 0x02, 0x6a];
+
+        // Encode the struct as a tuple
+        let encoded = ethers::abi::encode(&[
+            ethers::abi::Token::Address(token_in),
+            ethers::abi::Token::Address(token_out),
+            ethers::abi::Token::Uint(amount_in),
+            ethers::abi::Token::Uint(U256::from(fee)),
+            ethers::abi::Token::Uint(sqrt_price_limit),
+        ]);
+
+        // Combine selector and encoded params
+        let mut calldata = Vec::with_capacity(4 + encoded.len());
+        calldata.extend_from_slice(&selector);
+        calldata.extend_from_slice(&encoded);
+
+        Bytes::from(calldata)
+    }
+
+    /// Decodes the quote result from QuoterV2.
+    ///
+    /// Returns (amountOut, sqrtPriceX96After, initializedTicksCrossed, gasEstimate)
+    /// We only need amountOut for the quote.
+    ///
+    /// # Errors
+    ///
+    /// Returns `VenueError::ProtocolError` if decoding fails.
+    fn decode_quote_result(&self, result: &Bytes) -> VenueResult<U256> {
+        let bytes = result
+            .get(0..32)
+            .ok_or_else(|| VenueError::protocol_error("Invalid quote result length"))?;
+
+        // First 32 bytes is amountOut
+        let amount_out = U256::from_big_endian(bytes);
+        Ok(amount_out)
+    }
 }
 
 impl fmt::Debug for UniswapV3Adapter {
@@ -859,13 +916,74 @@ impl VenueAdapter for UniswapV3Adapter {
         let (token_in, token_out) = self.resolve_tokens(rfq)?;
 
         // Create swap path
-        let _path = self.create_swap_path(&token_in, &token_out);
+        let path = self.create_swap_path(&token_in, &token_out);
 
-        // TODO: Call Quoter V2 contract to get quote
-        // For now, return a stub error indicating not implemented
-        Err(VenueError::internal_error(
-            "Uniswap V3 integration not yet implemented - requires ethers-rs contract calls",
-        ))
+        // Parse addresses
+        let token_in_addr = ContractClient::parse_address(&token_in)?;
+        let token_out_addr = ContractClient::parse_address(&token_out)?;
+        let quoter_addr = ContractClient::parse_address(self.config.quoter_contract())?;
+
+        // Calculate amount in
+        let amount_in = self.to_smallest_unit(rfq.quantity().get(), 18);
+        let amount_in_u256 = ContractClient::parse_u256(&amount_in)?;
+
+        // Encode quoteExactInputSingle call
+        // Function signature: quoteExactInputSingle((address,address,uint256,uint24,uint160))
+        let fee = self.config.default_fee_tier().raw();
+        let sqrt_price_limit = U256::zero();
+
+        // Build calldata for QuoterV2.quoteExactInputSingle
+        let calldata = self.encode_quote_exact_input_single(
+            token_in_addr,
+            token_out_addr,
+            amount_in_u256,
+            fee,
+            sqrt_price_limit,
+        );
+
+        // Call the quoter contract
+        let result = self.contract_client.call(quoter_addr, calldata).await?;
+
+        // Decode the result (amountOut, sqrtPriceX96After, initializedTicksCrossed, gasEstimate)
+        let amount_out = self.decode_quote_result(&result)?;
+
+        // Calculate min amount out with slippage
+        let min_amount_out = self.calculate_min_amount_out(&amount_out.to_string())?;
+
+        // Calculate price
+        let amount_in_f64: f64 = amount_in.parse().unwrap_or(1.0);
+        let amount_out_f64: f64 = amount_out.to_string().parse().unwrap_or(0.0);
+        let price_value = if amount_in_f64 > 0.0 {
+            amount_out_f64 / amount_in_f64
+        } else {
+            0.0
+        };
+        let price = Price::new(price_value)
+            .map_err(|_| VenueError::protocol_error("Invalid price value"))?;
+
+        // Build quote
+        let valid_until = Timestamp::now().add_secs(self.config.quote_validity_secs() as i64);
+
+        let mut builder = QuoteBuilder::new(
+            rfq.id(),
+            self.config.venue_id().clone(),
+            price,
+            rfq.quantity(),
+            valid_until,
+        );
+
+        // Add metadata
+        let mut metadata = QuoteMetadata::new();
+        metadata.set("amount_in", amount_in.clone());
+        metadata.set("amount_out", amount_out.to_string());
+        metadata.set("min_amount_out", min_amount_out);
+        metadata.set("path", hex::encode(path.encode()));
+        metadata.set("router", self.config.router_contract().to_string());
+        metadata.set("fee_tier", fee.to_string());
+
+        builder = builder.metadata(metadata);
+
+        Ok(builder.build())
     }
 
     async fn execute_trade(&self, quote: &Quote) -> VenueResult<ExecutionResult> {
@@ -897,15 +1015,23 @@ impl VenueAdapter for UniswapV3Adapter {
     }
 
     async fn health_check(&self) -> VenueResult<VenueHealth> {
-        // TODO: Check RPC connection and contract availability
-        // For now, return healthy if enabled
-        if self.config.is_enabled() {
-            Ok(VenueHealth::healthy(self.config.venue_id().clone()))
-        } else {
-            Ok(VenueHealth::unhealthy(
+        if !self.config.is_enabled() {
+            return Ok(VenueHealth::unhealthy(
                 self.config.venue_id().clone(),
                 "Adapter is disabled",
-            ))
+            ));
+        }
+
+        // Check RPC connection
+        match self.contract_client.health_check_with_latency().await {
+            Ok(latency_ms) => Ok(VenueHealth::healthy_with_latency(
+                self.config.venue_id().clone(),
+                latency_ms,
+            )),
+            Err(_) => Ok(VenueHealth::unhealthy(
+                self.config.venue_id().clone(),
+                "RPC connection failed",
+            )),
         }
     }
 
@@ -1173,13 +1299,13 @@ mod tests {
 
         #[test]
         fn new_adapter() {
-            let adapter = UniswapV3Adapter::new(test_config());
+            let adapter = UniswapV3Adapter::new(test_config()).unwrap();
             assert_eq!(adapter.config().chain(), UniswapV3Chain::Ethereum);
         }
 
         #[test]
         fn debug_impl() {
-            let adapter = UniswapV3Adapter::new(test_config());
+            let adapter = UniswapV3Adapter::new(test_config()).unwrap();
             let debug = format!("{:?}", adapter);
             assert!(debug.contains("UniswapV3Adapter"));
             assert!(debug.contains("uniswap-v3"));
@@ -1187,7 +1313,7 @@ mod tests {
 
         #[test]
         fn to_smallest_unit() {
-            let adapter = UniswapV3Adapter::new(test_config());
+            let adapter = UniswapV3Adapter::new(test_config()).unwrap();
             let amount = Decimal::from_str("1.5").unwrap();
             let result = adapter.to_smallest_unit(amount, 18);
             assert_eq!(result, "1500000000000000000");
@@ -1195,7 +1321,7 @@ mod tests {
 
         #[test]
         fn calculate_min_amount_out() {
-            let adapter = UniswapV3Adapter::new(test_config());
+            let adapter = UniswapV3Adapter::new(test_config()).unwrap();
             // 50 bps slippage = 0.5%
             let min = adapter
                 .calculate_min_amount_out("1000000000000000000")
@@ -1206,7 +1332,7 @@ mod tests {
 
         #[test]
         fn create_swap_path() {
-            let adapter = UniswapV3Adapter::new(test_config());
+            let adapter = UniswapV3Adapter::new(test_config()).unwrap();
             let path = adapter.create_swap_path("0xtoken0", "0xtoken1");
             assert!(path.is_direct());
             assert_eq!(path.fees[0], FeeTier::Medium.raw());
@@ -1214,7 +1340,7 @@ mod tests {
 
         #[test]
         fn calculate_price() {
-            let adapter = UniswapV3Adapter::new(test_config());
+            let adapter = UniswapV3Adapter::new(test_config()).unwrap();
             let price = adapter.calculate_price("1000000000", "2000000000").unwrap();
             assert!((price.get().to_f64().unwrap() - 2.0).abs() < 0.0001);
         }
@@ -1224,38 +1350,32 @@ mod tests {
         use super::*;
 
         #[tokio::test]
-        async fn health_check_enabled() {
-            let adapter = UniswapV3Adapter::new(test_config());
-            let health = adapter.health_check().await.unwrap();
-            assert!(health.is_healthy());
-        }
-
-        #[tokio::test]
         async fn health_check_disabled() {
             let config = test_config().with_enabled(false);
-            let adapter = UniswapV3Adapter::new(config);
+            let adapter = UniswapV3Adapter::new(config).unwrap();
             let health = adapter.health_check().await.unwrap();
             assert!(!health.is_healthy());
         }
 
         #[tokio::test]
         async fn is_available() {
-            let adapter = UniswapV3Adapter::new(test_config());
+            let adapter = UniswapV3Adapter::new(test_config()).unwrap();
             assert!(adapter.is_available().await);
 
-            let disabled_adapter = UniswapV3Adapter::new(test_config().with_enabled(false));
+            let disabled_adapter =
+                UniswapV3Adapter::new(test_config().with_enabled(false)).unwrap();
             assert!(!disabled_adapter.is_available().await);
         }
 
         #[tokio::test]
         async fn venue_id() {
-            let adapter = UniswapV3Adapter::new(test_config());
+            let adapter = UniswapV3Adapter::new(test_config()).unwrap();
             assert_eq!(adapter.venue_id(), &VenueId::new("uniswap-v3"));
         }
 
         #[tokio::test]
         async fn timeout_ms() {
-            let adapter = UniswapV3Adapter::new(test_config());
+            let adapter = UniswapV3Adapter::new(test_config()).unwrap();
             assert_eq!(adapter.timeout_ms(), 5000);
         }
     }

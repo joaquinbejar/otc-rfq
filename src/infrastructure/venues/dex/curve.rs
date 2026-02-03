@@ -30,9 +30,11 @@ use crate::domain::entities::quote::{Quote, QuoteBuilder, QuoteMetadata};
 use crate::domain::entities::rfq::Rfq;
 use crate::domain::value_objects::timestamp::Timestamp;
 use crate::domain::value_objects::{Blockchain, OrderSide, Price, VenueId};
+use crate::infrastructure::venues::contract_client::ContractClient;
 use crate::infrastructure::venues::error::{VenueError, VenueResult};
 use crate::infrastructure::venues::traits::{ExecutionResult, VenueAdapter, VenueHealth};
 use async_trait::async_trait;
+use ethers::prelude::*;
 use rust_decimal::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -610,21 +612,25 @@ impl CurveConfig {
 /// - Meta-pool support
 /// - Gas estimation
 /// - Slippage protection
-///
-/// # Note
-///
-/// This is a stub implementation. Full contract integration
-/// will be completed with ethers-rs.
 pub struct CurveAdapter {
     /// Configuration.
     config: CurveConfig,
+    /// Contract client for RPC calls.
+    contract_client: ContractClient,
 }
 
 impl CurveAdapter {
     /// Creates a new Curve adapter.
-    #[must_use]
-    pub fn new(config: CurveConfig) -> Self {
-        Self { config }
+    ///
+    /// # Errors
+    ///
+    /// Returns `VenueError::Connection` if the RPC provider cannot be created.
+    pub fn new(config: CurveConfig) -> VenueResult<Self> {
+        let contract_client = ContractClient::new(config.rpc_url(), config.timeout_ms())?;
+        Ok(Self {
+            config,
+            contract_client,
+        })
     }
 
     /// Returns the configuration.
@@ -793,6 +799,50 @@ impl CurveAdapter {
 
         Ok(())
     }
+
+    /// Encodes the get_best_rate call for Curve Registry.
+    ///
+    /// Function signature: get_best_rate(address from, address to, uint256 amount) returns (address, uint256)
+    fn encode_get_best_rate(&self, from: Address, to: Address, amount: U256) -> Bytes {
+        // Function selector for get_best_rate(address,address,uint256)
+        // keccak256("get_best_rate(address,address,uint256)")[0:4]
+        let selector: [u8; 4] = [0x4e, 0x21, 0xdf, 0x75];
+
+        let encoded = ethers::abi::encode(&[
+            ethers::abi::Token::Address(from),
+            ethers::abi::Token::Address(to),
+            ethers::abi::Token::Uint(amount),
+        ]);
+
+        let mut calldata = Vec::with_capacity(4 + encoded.len());
+        calldata.extend_from_slice(&selector);
+        calldata.extend_from_slice(&encoded);
+
+        Bytes::from(calldata)
+    }
+
+    /// Decodes the get_best_rate result.
+    ///
+    /// Returns (pool address, amount out).
+    ///
+    /// # Errors
+    ///
+    /// Returns `VenueError::ProtocolError` if decoding fails.
+    fn decode_best_rate_result(&self, result: &Bytes) -> VenueResult<(Address, U256)> {
+        let pool_bytes = result
+            .get(12..32)
+            .ok_or_else(|| VenueError::protocol_error("Invalid best rate result length"))?;
+        let amount_bytes = result
+            .get(32..64)
+            .ok_or_else(|| VenueError::protocol_error("Invalid best rate result length"))?;
+
+        // First 32 bytes is pool address (padded)
+        let pool = Address::from_slice(pool_bytes);
+        // Next 32 bytes is amount out
+        let amount_out = U256::from_big_endian(amount_bytes);
+
+        Ok((pool, amount_out))
+    }
 }
 
 impl fmt::Debug for CurveAdapter {
@@ -825,14 +875,62 @@ impl VenueAdapter for CurveAdapter {
         }
 
         // Resolve tokens
-        let (_token_in, _token_out) = self.resolve_tokens(rfq)?;
+        let (token_in, token_out) = self.resolve_tokens(rfq)?;
 
-        // TODO: Call Registry to find best pool
-        // TODO: Call get_dy on pool to get quote
-        // For now, return a stub error indicating not implemented
-        Err(VenueError::internal_error(
-            "Curve integration not yet implemented - requires ethers-rs contract calls",
-        ))
+        // Parse addresses
+        let token_in_addr = ContractClient::parse_address(&token_in)?;
+        let token_out_addr = ContractClient::parse_address(&token_out)?;
+        let registry_addr = ContractClient::parse_address(self.config.registry_contract())?;
+
+        // Calculate amount in
+        let amount_in = self.to_smallest_unit(rfq.quantity().get(), 18);
+        let amount_in_u256 = ContractClient::parse_u256(&amount_in)?;
+
+        // Encode get_best_rate call on Registry
+        // Function: get_best_rate(address from, address to, uint256 amount) returns (address pool, uint256 amountOut)
+        let calldata = self.encode_get_best_rate(token_in_addr, token_out_addr, amount_in_u256);
+
+        // Call the registry contract
+        let result = self.contract_client.call(registry_addr, calldata).await?;
+
+        // Decode the result (pool address, amount out)
+        let (pool_addr, amount_out) = self.decode_best_rate_result(&result)?;
+
+        if pool_addr == Address::zero() {
+            return Err(VenueError::protocol_error("No pool found for token pair"));
+        }
+
+        // Calculate min amount out with slippage
+        let min_amount_out = self.calculate_min_amount_out(&amount_out.to_string())?;
+
+        // Calculate price
+        let price = self.calculate_price(&amount_in, &amount_out.to_string())?;
+
+        // Build quote
+        let valid_until = Timestamp::now().add_secs(self.config.quote_validity_secs() as i64);
+
+        let mut builder = QuoteBuilder::new(
+            rfq.id(),
+            self.config.venue_id().clone(),
+            price,
+            rfq.quantity(),
+            valid_until,
+        );
+
+        // Add metadata
+        let mut metadata = QuoteMetadata::new();
+        metadata.set("amount_in", amount_in.clone());
+        metadata.set("amount_out", amount_out.to_string());
+        metadata.set("min_amount_out", min_amount_out);
+        metadata.set("pool", format!("{:?}", pool_addr));
+        metadata.set("router", self.config.router_contract().to_string());
+        metadata.set("i", "0");
+        metadata.set("j", "1");
+        metadata.set("use_underlying", self.config.use_underlying().to_string());
+
+        builder = builder.metadata(metadata);
+
+        Ok(builder.build())
     }
 
     async fn execute_trade(&self, quote: &Quote) -> VenueResult<ExecutionResult> {
@@ -864,15 +962,23 @@ impl VenueAdapter for CurveAdapter {
     }
 
     async fn health_check(&self) -> VenueResult<VenueHealth> {
-        // TODO: Check RPC connection and contract availability
-        // For now, return healthy if enabled
-        if self.config.is_enabled() {
-            Ok(VenueHealth::healthy(self.config.venue_id().clone()))
-        } else {
-            Ok(VenueHealth::unhealthy(
+        if !self.config.is_enabled() {
+            return Ok(VenueHealth::unhealthy(
                 self.config.venue_id().clone(),
                 "Adapter is disabled",
-            ))
+            ));
+        }
+
+        // Check RPC connection
+        match self.contract_client.health_check_with_latency().await {
+            Ok(latency_ms) => Ok(VenueHealth::healthy_with_latency(
+                self.config.venue_id().clone(),
+                latency_ms,
+            )),
+            Err(_) => Ok(VenueHealth::unhealthy(
+                self.config.venue_id().clone(),
+                "RPC connection failed",
+            )),
         }
     }
 
@@ -1095,13 +1201,13 @@ mod tests {
 
         #[test]
         fn new_adapter() {
-            let adapter = CurveAdapter::new(test_config());
+            let adapter = CurveAdapter::new(test_config()).unwrap();
             assert_eq!(adapter.config().chain(), CurveChain::Ethereum);
         }
 
         #[test]
         fn debug_impl() {
-            let adapter = CurveAdapter::new(test_config());
+            let adapter = CurveAdapter::new(test_config()).unwrap();
             let debug = format!("{:?}", adapter);
             assert!(debug.contains("CurveAdapter"));
             assert!(debug.contains("curve"));
@@ -1109,7 +1215,7 @@ mod tests {
 
         #[test]
         fn to_smallest_unit() {
-            let adapter = CurveAdapter::new(test_config());
+            let adapter = CurveAdapter::new(test_config()).unwrap();
             let amount = Decimal::from_str("1.5").unwrap();
             let result = adapter.to_smallest_unit(amount, 18);
             assert_eq!(result, "1500000000000000000");
@@ -1117,7 +1223,7 @@ mod tests {
 
         #[test]
         fn to_smallest_unit_6_decimals() {
-            let adapter = CurveAdapter::new(test_config());
+            let adapter = CurveAdapter::new(test_config()).unwrap();
             let amount = Decimal::from_str("100.0").unwrap();
             let result = adapter.to_smallest_unit(amount, 6);
             assert_eq!(result, "100000000");
@@ -1125,7 +1231,7 @@ mod tests {
 
         #[test]
         fn calculate_min_amount_out() {
-            let adapter = CurveAdapter::new(test_config());
+            let adapter = CurveAdapter::new(test_config()).unwrap();
             // 50 bps slippage = 0.5%
             let min = adapter
                 .calculate_min_amount_out("1000000000000000000")
@@ -1136,7 +1242,7 @@ mod tests {
 
         #[test]
         fn calculate_price() {
-            let adapter = CurveAdapter::new(test_config());
+            let adapter = CurveAdapter::new(test_config()).unwrap();
             let price = adapter.calculate_price("1000000000", "2000000000").unwrap();
             assert!((price.get().to_f64().unwrap() - 2.0).abs() < 0.0001);
         }
@@ -1146,38 +1252,31 @@ mod tests {
         use super::*;
 
         #[tokio::test]
-        async fn health_check_enabled() {
-            let adapter = CurveAdapter::new(test_config());
-            let health = adapter.health_check().await.unwrap();
-            assert!(health.is_healthy());
-        }
-
-        #[tokio::test]
         async fn health_check_disabled() {
             let config = test_config().with_enabled(false);
-            let adapter = CurveAdapter::new(config);
+            let adapter = CurveAdapter::new(config).unwrap();
             let health = adapter.health_check().await.unwrap();
             assert!(!health.is_healthy());
         }
 
         #[tokio::test]
         async fn is_available() {
-            let adapter = CurveAdapter::new(test_config());
+            let adapter = CurveAdapter::new(test_config()).unwrap();
             assert!(adapter.is_available().await);
 
-            let disabled_adapter = CurveAdapter::new(test_config().with_enabled(false));
+            let disabled_adapter = CurveAdapter::new(test_config().with_enabled(false)).unwrap();
             assert!(!disabled_adapter.is_available().await);
         }
 
         #[tokio::test]
         async fn venue_id() {
-            let adapter = CurveAdapter::new(test_config());
+            let adapter = CurveAdapter::new(test_config()).unwrap();
             assert_eq!(adapter.venue_id(), &VenueId::new("curve"));
         }
 
         #[tokio::test]
         async fn timeout_ms() {
-            let adapter = CurveAdapter::new(test_config());
+            let adapter = CurveAdapter::new(test_config()).unwrap();
             assert_eq!(adapter.timeout_ms(), 5000);
         }
     }
