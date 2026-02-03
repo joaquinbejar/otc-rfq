@@ -33,6 +33,7 @@
 //! - `fix_adapter`: FIX protocol adapter with IronFix encoding
 //! - `fix_session`: FIX session management with IronFix
 
+pub mod contract_client;
 pub mod dex;
 pub mod error;
 pub mod fix_adapter;
@@ -49,6 +50,7 @@ pub mod traits;
 #[cfg(test)]
 mod tests;
 
+pub use contract_client::ContractClient;
 pub use error::{VenueError, VenueResult};
 pub use fix_adapter::{FixMMAdapter, SessionState};
 pub use fix_config::{FixMMConfig, FixSessionConfig, FixVersion, LogonCredentials, TlsConfig};
