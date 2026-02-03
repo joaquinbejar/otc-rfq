@@ -5,24 +5,26 @@
 # Includes all development dependencies and debug symbols
 # =============================================================================
 
-FROM rust:1.83-slim-bookworm
+FROM rust:1.93-alpine3.23
 
 # Install development dependencies
-RUN apt-get update && apt-get install -y \
-    pkg-config \
-    libssl-dev \
-    protobuf-compiler \
+RUN apk add --no-cache \
+    musl-dev \
+    pkgconfig \
+    openssl-dev \
+    openssl-libs-static \
+    protobuf-dev \
+    protoc \
     curl \
-    git \
-    && rm -rf /var/lib/apt/lists/*
+    git
 
 # Install development tools
 RUN cargo install cargo-watch --locked
 RUN cargo install cargo-tarpaulin --locked || true
 
 # Create non-root user for development
-RUN groupadd --gid 1000 dev \
-    && useradd --uid 1000 --gid dev --shell /bin/bash --create-home dev
+RUN addgroup -g 1000 dev \
+    && adduser -u 1000 -G dev -s /bin/sh -D dev
 
 # Create app directory
 RUN mkdir -p /app && chown -R dev:dev /app

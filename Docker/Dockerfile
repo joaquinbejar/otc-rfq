@@ -8,13 +8,15 @@
 # -----------------------------------------------------------------------------
 # Stage 1: Chef - Prepare dependency recipe
 # -----------------------------------------------------------------------------
-FROM rust:1.83-slim-bookworm AS chef
+FROM rust:1.93-alpine3.23 AS chef
 
-RUN apt-get update && apt-get install -y \
-    pkg-config \
-    libssl-dev \
-    protobuf-compiler \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache \
+    musl-dev \
+    pkgconfig \
+    openssl-dev \
+    openssl-libs-static \
+    protobuf-dev \
+    protoc
 
 RUN cargo install cargo-chef --locked
 
@@ -47,18 +49,17 @@ RUN strip /app/target/release/otc-rfq || true
 # -----------------------------------------------------------------------------
 # Stage 4: Runtime - Minimal production image
 # -----------------------------------------------------------------------------
-FROM debian:bookworm-slim AS runtime
+FROM alpine:3.23 AS runtime
 
 # Install runtime dependencies
-RUN apt-get update && apt-get install -y \
+RUN apk add --no-cache \
     ca-certificates \
     libssl3 \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+    curl
 
 # Create non-root user for security
-RUN groupadd --gid 1000 otc \
-    && useradd --uid 1000 --gid otc --shell /bin/bash --create-home otc
+RUN addgroup -g 1000 otc \
+    && adduser -u 1000 -G otc -s /bin/sh -D otc
 
 # Create directories for configuration and data
 RUN mkdir -p /app/config /app/data /app/logs \
