@@ -265,47 +265,46 @@ impl Default for TracingState {
 #[must_use]
 pub fn extract_trace_context(headers: &HeaderMap) -> Option<TraceContext> {
     // Try W3C Trace Context first
-    if let Some(traceparent) = headers.get(headers::TRACEPARENT) {
-        if let Ok(value) = traceparent.to_str() {
-            if let Some(mut ctx) = TraceContext::from_traceparent(value) {
-                // Also extract tracestate if present
-                if let Some(tracestate) = headers.get(headers::TRACESTATE) {
-                    if let Ok(state) = tracestate.to_str() {
-                        ctx.trace_state = Some(state.to_string());
-                    }
-                }
-                return Some(ctx);
-            }
+    if let Some(traceparent) = headers.get(headers::TRACEPARENT)
+        && let Ok(value) = traceparent.to_str()
+        && let Some(mut ctx) = TraceContext::from_traceparent(value)
+    {
+        // Also extract tracestate if present
+        if let Some(tracestate) = headers.get(headers::TRACESTATE)
+            && let Ok(state) = tracestate.to_str()
+        {
+            ctx.trace_state = Some(state.to_string());
         }
+        return Some(ctx);
     }
 
     // Try B3 headers (Zipkin)
-    if let Some(trace_id) = headers.get(headers::B3_TRACE_ID) {
-        if let Ok(trace_id_str) = trace_id.to_str() {
-            let mut ctx = TraceContext::new();
-            ctx.trace_id = Some(trace_id_str.to_string());
+    if let Some(trace_id) = headers.get(headers::B3_TRACE_ID)
+        && let Ok(trace_id_str) = trace_id.to_str()
+    {
+        let mut ctx = TraceContext::new();
+        ctx.trace_id = Some(trace_id_str.to_string());
 
-            if let Some(span_id) = headers.get(headers::B3_SPAN_ID) {
-                if let Ok(span_id_str) = span_id.to_str() {
-                    ctx.parent_span_id = Some(span_id_str.to_string());
-                }
-            }
-
-            if let Some(sampled) = headers.get(headers::B3_SAMPLED) {
-                if let Ok(sampled_str) = sampled.to_str() {
-                    ctx.set_sampled(sampled_str == "1");
-                }
-            }
-
-            return Some(ctx);
+        if let Some(span_id) = headers.get(headers::B3_SPAN_ID)
+            && let Ok(span_id_str) = span_id.to_str()
+        {
+            ctx.parent_span_id = Some(span_id_str.to_string());
         }
+
+        if let Some(sampled) = headers.get(headers::B3_SAMPLED)
+            && let Ok(sampled_str) = sampled.to_str()
+        {
+            ctx.set_sampled(sampled_str == "1");
+        }
+
+        return Some(ctx);
     }
 
     // Try B3 single header
-    if let Some(b3) = headers.get(headers::B3_SINGLE) {
-        if let Ok(b3_str) = b3.to_str() {
-            return parse_b3_single(b3_str);
-        }
+    if let Some(b3) = headers.get(headers::B3_SINGLE)
+        && let Ok(b3_str) = b3.to_str()
+    {
+        return parse_b3_single(b3_str);
     }
 
     None
@@ -334,16 +333,16 @@ fn parse_b3_single(header: &str) -> Option<TraceContext> {
 
 /// Injects trace context into response headers.
 pub fn inject_trace_context(headers: &mut HeaderMap, ctx: &TraceContext) {
-    if let Some(traceparent) = ctx.to_traceparent() {
-        if let Ok(value) = HeaderValue::from_str(&traceparent) {
-            headers.insert(headers::TRACEPARENT, value);
-        }
+    if let Some(traceparent) = ctx.to_traceparent()
+        && let Ok(value) = HeaderValue::from_str(&traceparent)
+    {
+        headers.insert(headers::TRACEPARENT, value);
     }
 
-    if let Some(ref tracestate) = ctx.trace_state {
-        if let Ok(value) = HeaderValue::from_str(tracestate) {
-            headers.insert(headers::TRACESTATE, value);
-        }
+    if let Some(ref tracestate) = ctx.trace_state
+        && let Ok(value) = HeaderValue::from_str(tracestate)
+    {
+        headers.insert(headers::TRACESTATE, value);
     }
 }
 
@@ -409,12 +408,12 @@ pub async fn tracing_middleware(
     };
 
     // Add trace headers to response
-    if state.config.include_response_headers {
-        if let Some(mut ctx) = trace_ctx {
-            // Update parent span ID to current span
-            ctx.parent_span_id = Some(span_id);
-            inject_trace_context(response.headers_mut(), &ctx);
-        }
+    if state.config.include_response_headers
+        && let Some(mut ctx) = trace_ctx
+    {
+        // Update parent span ID to current span
+        ctx.parent_span_id = Some(span_id);
+        inject_trace_context(response.headers_mut(), &ctx);
     }
 
     response

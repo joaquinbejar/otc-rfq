@@ -4,8 +4,8 @@
 //!
 //! This implementation uses PostgreSQL with optimistic locking via version fields.
 
-use crate::domain::entities::trade::Trade;
 use crate::domain::entities::SettlementState;
+use crate::domain::entities::trade::Trade;
 use crate::domain::value_objects::{RfqId, TradeId, VenueId};
 use crate::infrastructure::persistence::traits::{
     RepositoryError, RepositoryResult, TradeRepository,
@@ -98,15 +98,15 @@ impl TradeRepository for PostgresTradeRepository {
                 .await
                 .map_err(|e| RepositoryError::query(e.to_string()))?;
 
-            if let Some((existing_version,)) = exists {
-                if existing_version >= version {
-                    return Err(RepositoryError::version_conflict(
-                        "Trade",
-                        id,
-                        version as u64,
-                        existing_version as u64,
-                    ));
-                }
+            if let Some((existing_version,)) = exists
+                && existing_version >= version
+            {
+                return Err(RepositoryError::version_conflict(
+                    "Trade",
+                    id,
+                    version as u64,
+                    existing_version as u64,
+                ));
             }
         }
 

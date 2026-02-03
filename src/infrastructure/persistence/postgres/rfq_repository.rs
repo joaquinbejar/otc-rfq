@@ -120,15 +120,15 @@ impl RfqRepository for PostgresRfqRepository {
                 .await
                 .map_err(|e| RepositoryError::query(e.to_string()))?;
 
-            if let Some((existing_version,)) = exists {
-                if existing_version >= version {
-                    return Err(RepositoryError::version_conflict(
-                        "Rfq",
-                        id,
-                        version as u64,
-                        existing_version as u64,
-                    ));
-                }
+            if let Some((existing_version,)) = exists
+                && existing_version >= version
+            {
+                return Err(RepositoryError::version_conflict(
+                    "Rfq",
+                    id,
+                    version as u64,
+                    existing_version as u64,
+                ));
             }
         }
 
@@ -280,8 +280,8 @@ struct RfqRow {
 impl RfqRow {
     /// Converts the row into an RFQ entity.
     fn try_into_rfq(self) -> RepositoryResult<Rfq> {
-        use crate::domain::entities::quote::Quote;
         use crate::domain::entities::ComplianceResult;
+        use crate::domain::entities::quote::Quote;
         use crate::domain::value_objects::enums::OrderSide;
         use crate::domain::value_objects::timestamp::Timestamp;
         use crate::domain::value_objects::{Instrument, Quantity, QuoteId};

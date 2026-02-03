@@ -28,8 +28,8 @@ use crate::domain::entities::trade::Trade;
 use crate::domain::value_objects::RfqState;
 use axum::{
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
         Query, State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
     },
     response::IntoResponse,
 };
@@ -37,7 +37,7 @@ use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio::sync::{RwLock, broadcast, mpsc};
 use tracing::{debug, error, info, instrument, warn};
 
 // ============================================================================
@@ -379,11 +379,11 @@ pub async fn ws_handler(
     info!("WebSocket connection request");
 
     // Validate token if provided (placeholder for actual auth)
-    if let Some(ref token) = params.token {
-        if !validate_token(token) {
-            warn!("Invalid WebSocket token");
-            // In production, return an error response
-        }
+    if let Some(ref token) = params.token
+        && !validate_token(token)
+    {
+        warn!("Invalid WebSocket token");
+        // In production, return an error response
     }
 
     ws.on_upgrade(move |socket| handle_socket(socket, state))
@@ -468,10 +468,10 @@ async fn handle_socket(socket: WebSocket, state: Arc<WebSocketState>) {
     // Spawn task to send messages to client
     let send_task = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
-            if let Ok(json) = serde_json::to_string(&msg) {
-                if sender.send(Message::Text(json.into())).await.is_err() {
-                    break;
-                }
+            if let Ok(json) = serde_json::to_string(&msg)
+                && sender.send(Message::Text(json.into())).await.is_err()
+            {
+                break;
             }
         }
     });

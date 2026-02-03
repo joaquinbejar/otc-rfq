@@ -490,16 +490,16 @@ mod tests {
 
     #[test]
     fn substitute_env_vars_with_var() {
-        std::env::set_var("TEST_API_KEY", "secret123");
-        let result = substitute_env_vars("https://api.example.com/v1/${TEST_API_KEY}").unwrap();
-        assert_eq!(result, "https://api.example.com/v1/secret123");
-        std::env::remove_var("TEST_API_KEY");
+        // Use HOME which is always set on Unix systems
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        let result = substitute_env_vars("prefix/${HOME}/suffix").unwrap();
+        assert_eq!(result, format!("prefix/{}/suffix", home));
     }
 
     #[test]
     fn substitute_env_vars_missing_var() {
-        std::env::remove_var("NONEXISTENT_VAR");
-        let result = substitute_env_vars("https://api.example.com/${NONEXISTENT_VAR}");
+        // Use a var name that is extremely unlikely to exist
+        let result = substitute_env_vars("https://api.example.com/${__NONEXISTENT_VAR_12345678__}");
         assert!(result.is_err());
     }
 

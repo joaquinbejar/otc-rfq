@@ -60,11 +60,10 @@ proptest! {
         a in valid_positive_f64(),
         b in valid_positive_f64()
     ) {
-        if let (Ok(price_a), Ok(price_b)) = (Price::new(a), Price::new(b)) {
-            if let (Ok(ab), Ok(ba)) = (price_a.safe_add(price_b), price_b.safe_add(price_a)) {
+        if let (Ok(price_a), Ok(price_b)) = (Price::new(a), Price::new(b))
+            && let (Ok(ab), Ok(ba)) = (price_a.safe_add(price_b), price_b.safe_add(price_a)) {
                 prop_assert_eq!(ab, ba);
             }
-        }
     }
 
     /// Price addition with zero is identity: a + 0 == a
@@ -82,13 +81,11 @@ proptest! {
         a in valid_positive_f64(),
         b in valid_positive_f64()
     ) {
-        if let (Ok(price_a), Ok(price_b)) = (Price::new(a), Price::new(b)) {
-            if let Ok(sum) = price_a.safe_add(price_b) {
-                if let Ok(result) = sum.safe_sub(price_b) {
+        if let (Ok(price_a), Ok(price_b)) = (Price::new(a), Price::new(b))
+            && let Ok(sum) = price_a.safe_add(price_b)
+                && let Ok(result) = sum.safe_sub(price_b) {
                     prop_assert_eq!(result, price_a);
                 }
-            }
-        }
     }
 
     /// Price multiplication by 1 is identity: a * 1 == a
@@ -155,11 +152,10 @@ proptest! {
         a in valid_positive_f64(),
         b in valid_positive_f64()
     ) {
-        if let (Ok(qty_a), Ok(qty_b)) = (Quantity::new(a), Quantity::new(b)) {
-            if let (Ok(ab), Ok(ba)) = (qty_a.safe_add(qty_b), qty_b.safe_add(qty_a)) {
+        if let (Ok(qty_a), Ok(qty_b)) = (Quantity::new(a), Quantity::new(b))
+            && let (Ok(ab), Ok(ba)) = (qty_a.safe_add(qty_b), qty_b.safe_add(qty_a)) {
                 prop_assert_eq!(ab, ba);
             }
-        }
     }
 
     /// Quantity addition with zero is identity: a + 0 == a
@@ -177,13 +173,11 @@ proptest! {
         a in valid_positive_f64(),
         b in valid_positive_f64()
     ) {
-        if let (Ok(qty_a), Ok(qty_b)) = (Quantity::new(a), Quantity::new(b)) {
-            if let Ok(sum) = qty_a.safe_add(qty_b) {
-                if let Ok(result) = sum.safe_sub(qty_b) {
+        if let (Ok(qty_a), Ok(qty_b)) = (Quantity::new(a), Quantity::new(b))
+            && let Ok(sum) = qty_a.safe_add(qty_b)
+                && let Ok(result) = sum.safe_sub(qty_b) {
                     prop_assert_eq!(result, qty_a);
                 }
-            }
-        }
     }
 
     /// Quantity fill ratio is always in [0, 1]
@@ -278,11 +272,10 @@ proptest! {
         a in valid_decimal(),
         b in valid_decimal()
     ) {
-        if let Ok(sum) = a.safe_add(b) {
-            if let Ok(result) = sum.safe_sub(b) {
+        if let Ok(sum) = a.safe_add(b)
+            && let Ok(result) = sum.safe_sub(b) {
                 prop_assert_eq!(result, a);
             }
-        }
     }
 
     /// Decimal division by self gives one (for non-zero)
@@ -431,11 +424,10 @@ proptest! {
         a in 0u64..u64::MAX / 2,
         b in 0u64..u64::MAX / 2
     ) {
-        if let Ok(sum) = a.safe_add(b) {
-            if let Ok(result) = sum.safe_sub(b) {
+        if let Ok(sum) = a.safe_add(b)
+            && let Ok(result) = sum.safe_sub(b) {
                 prop_assert_eq!(result, a);
             }
-        }
     }
 
     /// i64 addition is commutative
@@ -455,11 +447,10 @@ proptest! {
         a in i64::MIN / 2..i64::MAX / 2,
         b in i64::MIN / 2..i64::MAX / 2
     ) {
-        if let Ok(sum) = a.safe_add(b) {
-            if let Ok(result) = sum.safe_sub(b) {
+        if let Ok(sum) = a.safe_add(b)
+            && let Ok(result) = sum.safe_sub(b) {
                 prop_assert_eq!(result, a);
             }
-        }
     }
 }
 

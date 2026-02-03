@@ -39,8 +39,8 @@ use crate::application::use_cases::execute_trade::{
 use crate::domain::entities::quote::Quote;
 use crate::domain::entities::rfq::{ComplianceResult, Rfq, RfqBuilder};
 use crate::domain::entities::trade::Trade;
-use crate::domain::events::rfq_events::{QuoteReceived, RfqCreated};
 use crate::domain::events::TradeExecuted;
+use crate::domain::events::rfq_events::{QuoteReceived, RfqCreated};
 use crate::domain::value_objects::enums::{AssetClass, SettlementMethod};
 use crate::domain::value_objects::symbol::Symbol;
 use crate::domain::value_objects::timestamp::Timestamp;
@@ -786,12 +786,14 @@ mod collect_quotes_tests {
             .iter()
             .find(|f| f.venue_id.as_str() == "venue-1");
         assert!(timeout_failure.is_some());
-        assert!(timeout_failure
-            .unwrap()
-            .error
-            .as_ref()
-            .unwrap()
-            .contains("timed out"));
+        assert!(
+            timeout_failure
+                .unwrap()
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("timed out")
+        );
     }
 
     #[tokio::test]
@@ -1468,12 +1470,14 @@ mod e2e_rfq_workflow_tests {
             .iter()
             .find(|f| f.venue_id.as_str() == "venue-slow");
         assert!(timeout_failure.is_some());
-        assert!(timeout_failure
-            .unwrap()
-            .error
-            .as_ref()
-            .unwrap()
-            .contains("timed out"));
+        assert!(
+            timeout_failure
+                .unwrap()
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("timed out")
+        );
     }
 
     /// Tests that compliance failure prevents RFQ creation.

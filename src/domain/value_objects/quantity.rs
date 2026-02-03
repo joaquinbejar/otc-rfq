@@ -198,22 +198,14 @@ impl Quantity {
     #[inline]
     #[must_use]
     pub fn min(self, other: Self) -> Self {
-        if self.0 <= other.0 {
-            self
-        } else {
-            other
-        }
+        if self.0 <= other.0 { self } else { other }
     }
 
     /// Returns the maximum of two quantities.
     #[inline]
     #[must_use]
     pub fn max(self, other: Self) -> Self {
-        if self.0 >= other.0 {
-            self
-        } else {
-            other
-        }
+        if self.0 >= other.0 { self } else { other }
     }
 
     /// Returns the remaining quantity after filling.

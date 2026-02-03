@@ -12,7 +12,7 @@
 
 use super::error::{SbeError, SbeResult};
 use super::traits::{SbeDecode, SbeEncode};
-use super::types::{decode_var_string, encode_var_string, SbeDecimal, SbeUuid};
+use super::types::{SbeDecimal, SbeUuid, decode_var_string, encode_var_string};
 use crate::domain::events::rfq_events::{QuoteReceived, RfqCreated};
 use crate::domain::events::trade_events::TradeExecuted;
 use crate::domain::value_objects::timestamp::Timestamp;

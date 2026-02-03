@@ -92,15 +92,15 @@ impl RfqRepository for InMemoryRfqRepository {
         let mut storage = self.storage.write().await;
 
         // Check for version conflict if updating
-        if let Some(existing) = storage.get(&rfq.id()) {
-            if existing.version() >= rfq.version() {
-                return Err(RepositoryError::version_conflict(
-                    "Rfq",
-                    rfq.id().to_string(),
-                    rfq.version(),
-                    existing.version(),
-                ));
-            }
+        if let Some(existing) = storage.get(&rfq.id())
+            && existing.version() >= rfq.version()
+        {
+            return Err(RepositoryError::version_conflict(
+                "Rfq",
+                rfq.id().to_string(),
+                rfq.version(),
+                existing.version(),
+            ));
         }
 
         storage.insert(rfq.id(), rfq.clone());

@@ -26,8 +26,8 @@ pub mod traits;
 pub mod types;
 
 pub use codecs::{
-    QuoteReceivedCodec, RfqCreatedCodec, TradeExecutedCodec, MESSAGE_HEADER_SIZE,
-    QUOTE_RECEIVED_TEMPLATE_ID, RFQ_CREATED_TEMPLATE_ID, TRADE_EXECUTED_TEMPLATE_ID,
+    MESSAGE_HEADER_SIZE, QUOTE_RECEIVED_TEMPLATE_ID, QuoteReceivedCodec, RFQ_CREATED_TEMPLATE_ID,
+    RfqCreatedCodec, TRADE_EXECUTED_TEMPLATE_ID, TradeExecutedCodec,
 };
 pub use error::SbeError;
 pub use traits::{SbeDecode, SbeEncode};

@@ -391,20 +391,20 @@ impl AppConfig {
         if let Ok(host) = std::env::var("OTC_RFQ_GRPC_HOST") {
             self.grpc.host = host;
         }
-        if let Ok(port) = std::env::var("OTC_RFQ_GRPC_PORT") {
-            if let Ok(p) = port.parse() {
-                self.grpc.port = p;
-            }
+        if let Ok(port) = std::env::var("OTC_RFQ_GRPC_PORT")
+            && let Ok(p) = port.parse()
+        {
+            self.grpc.port = p;
         }
 
         // REST configuration
         if let Ok(host) = std::env::var("OTC_RFQ_REST_HOST") {
             self.rest.host = host;
         }
-        if let Ok(port) = std::env::var("OTC_RFQ_REST_PORT") {
-            if let Ok(p) = port.parse() {
-                self.rest.port = p;
-            }
+        if let Ok(port) = std::env::var("OTC_RFQ_REST_PORT")
+            && let Ok(p) = port.parse()
+        {
+            self.rest.port = p;
         }
 
         // Logging configuration

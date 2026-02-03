@@ -221,7 +221,7 @@ pub trait EventStore: Send + Sync + fmt::Debug {
     ///
     /// Returns an error if events cannot be retrieved.
     async fn get_events_by_type(&self, event_type: EventType)
-        -> EventStoreResult<Vec<StoredEvent>>;
+    -> EventStoreResult<Vec<StoredEvent>>;
 
     /// Returns the total number of events in the store.
     ///

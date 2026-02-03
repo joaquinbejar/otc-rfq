@@ -33,11 +33,11 @@
 //! ```
 
 use axum::{
+    Json,
     extract::Request,
     http::{HeaderMap, HeaderValue, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

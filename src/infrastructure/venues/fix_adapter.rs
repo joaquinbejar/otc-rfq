@@ -44,9 +44,9 @@ use crate::infrastructure::venues::traits::{ExecutionResult, VenueAdapter, Venue
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tokio::sync::{oneshot, RwLock};
+use std::sync::atomic::{AtomicU64, Ordering};
+use tokio::sync::{RwLock, oneshot};
 
 /// FIX message type constants.
 pub mod msg_type {
@@ -759,12 +759,16 @@ mod tests {
             let rfq = test_rfq();
             let fields = adapter.build_quote_request(&rfq, "QR-123");
 
-            assert!(fields
-                .iter()
-                .any(|(t, v)| *t == tags::QUOTE_REQ_ID && v == "QR-123"));
-            assert!(fields
-                .iter()
-                .any(|(t, v)| *t == tags::SYMBOL && v == "BTC/USD"));
+            assert!(
+                fields
+                    .iter()
+                    .any(|(t, v)| *t == tags::QUOTE_REQ_ID && v == "QR-123")
+            );
+            assert!(
+                fields
+                    .iter()
+                    .any(|(t, v)| *t == tags::SYMBOL && v == "BTC/USD")
+            );
             assert!(fields.iter().any(|(t, v)| *t == tags::SIDE && v == "1"));
         }
     }

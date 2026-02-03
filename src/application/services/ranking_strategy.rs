@@ -453,10 +453,10 @@ impl RankingStrategy for CompositeStrategy {
             // Map scores back to original quote indices
             for rq in ranked {
                 // Find the original index by matching quote
-                if let Some(idx) = quotes.iter().position(|q| q.id() == rq.quote.id()) {
-                    if let Some(score) = combined_scores.get_mut(idx) {
-                        *score += rq.score * weight;
-                    }
+                if let Some(idx) = quotes.iter().position(|q| q.id() == rq.quote.id())
+                    && let Some(score) = combined_scores.get_mut(idx)
+                {
+                    *score += rq.score * weight;
                 }
             }
             total_weight += weight;

@@ -200,8 +200,8 @@ struct CounterpartyRow {
 impl CounterpartyRow {
     /// Converts the row into a Counterparty entity.
     fn try_into_counterparty(self) -> RepositoryResult<Counterparty> {
-        use crate::domain::entities::counterparty::{CounterpartyLimits, KycStatus, WalletAddress};
         use crate::domain::entities::CounterpartyType;
+        use crate::domain::entities::counterparty::{CounterpartyLimits, KycStatus, WalletAddress};
         use crate::domain::value_objects::timestamp::Timestamp;
 
         let id = CounterpartyId::new(&self.id);

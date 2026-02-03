@@ -21,8 +21,8 @@
 //! assert!(!results.has_blocking_flags());
 //! ```
 
-use crate::domain::value_objects::timestamp::Timestamp;
 use crate::domain::value_objects::Price;
+use crate::domain::value_objects::timestamp::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 

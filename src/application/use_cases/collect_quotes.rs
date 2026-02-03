@@ -618,12 +618,14 @@ mod tests {
         let response = result.unwrap();
         assert_eq!(response.success_count(), 0);
         assert_eq!(response.failure_count(), 1);
-        assert!(response
-            .failures
-            .first()
-            .and_then(|f| f.error.as_ref())
-            .map(|e| e.contains("timed out"))
-            .unwrap_or(false));
+        assert!(
+            response
+                .failures
+                .first()
+                .and_then(|f| f.error.as_ref())
+                .map(|e| e.contains("timed out"))
+                .unwrap_or(false)
+        );
     }
 
     #[tokio::test]

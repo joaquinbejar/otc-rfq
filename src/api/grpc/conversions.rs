@@ -594,8 +594,8 @@ mod tests {
 
     #[test]
     fn instrument_conversion() {
-        use crate::domain::value_objects::enums::AssetClass;
         use crate::domain::value_objects::Symbol;
+        use crate::domain::value_objects::enums::AssetClass;
 
         let symbol = Symbol::new("BTC/USD").unwrap();
         let instrument = Instrument::builder(symbol, AssetClass::CryptoSpot).build();
@@ -630,8 +630,8 @@ mod tests {
 
     #[test]
     fn rfq_conversion() {
-        use crate::domain::value_objects::enums::AssetClass;
         use crate::domain::value_objects::Symbol;
+        use crate::domain::value_objects::enums::AssetClass;
 
         let symbol = Symbol::new("ETH/USD").unwrap();
         let instrument = Instrument::builder(symbol, AssetClass::CryptoSpot).build();

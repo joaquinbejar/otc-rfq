@@ -384,8 +384,8 @@ impl<E: fmt::Debug + fmt::Display> std::error::Error for NeverRetryable<E> {}
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     #[derive(Debug, Clone)]
     struct TestError {

@@ -32,7 +32,7 @@ use axum::{
 };
 use std::sync::Arc;
 use std::time::Instant;
-use tracing::{debug, error, info, instrument, warn, Level, Span};
+use tracing::{Level, Span, debug, error, info, instrument, warn};
 use uuid::Uuid;
 
 // ============================================================================
@@ -344,14 +344,12 @@ pub async fn logging_middleware(
     let duration_ms = duration.as_millis() as u64;
 
     // Add request ID to response headers
-    if state.config.generate_request_id {
-        if let Ok(header_value) = HeaderValue::from_str(request_id.as_str()) {
-            if let Ok(header_name) = axum::http::header::HeaderName::from_bytes(
-                state.config.request_id_header.as_bytes(),
-            ) {
-                response.headers_mut().insert(header_name, header_value);
-            }
-        }
+    if state.config.generate_request_id
+        && let Ok(header_value) = HeaderValue::from_str(request_id.as_str())
+        && let Ok(header_name) =
+            axum::http::header::HeaderName::from_bytes(state.config.request_id_header.as_bytes())
+    {
+        response.headers_mut().insert(header_name, header_value);
     }
 
     // Get status code
@@ -444,9 +442,11 @@ mod tests {
     fn logging_config_with_redacted_headers() {
         let config =
             LoggingConfig::default().with_redacted_headers(vec!["x-custom-secret".to_string()]);
-        assert!(config
-            .redacted_headers
-            .contains(&"x-custom-secret".to_string()));
+        assert!(
+            config
+                .redacted_headers
+                .contains(&"x-custom-secret".to_string())
+        );
     }
 
     #[test]

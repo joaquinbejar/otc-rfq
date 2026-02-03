@@ -28,6 +28,6 @@ pub use ranking_strategy::{
     LowestSlippageStrategy, RankedQuote, RankingStrategy, WeightedScoreStrategy,
 };
 pub use retry::{
-    execute_with_retry, AlwaysRetryable, NeverRetryable, RetryError, RetryPolicy, RetryResult,
-    Retryable,
+    AlwaysRetryable, NeverRetryable, RetryError, RetryPolicy, RetryResult, Retryable,
+    execute_with_retry,
 };

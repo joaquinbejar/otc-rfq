@@ -5,8 +5,8 @@
 //! This implementation uses a thread-safe `HashMap` for storage,
 //! making it suitable for unit tests without database dependencies.
 
-use crate::domain::entities::trade::Trade;
 use crate::domain::entities::SettlementState;
+use crate::domain::entities::trade::Trade;
 use crate::domain::value_objects::{RfqId, TradeId, VenueId};
 use crate::infrastructure::persistence::traits::{
     RepositoryError, RepositoryResult, TradeRepository,
@@ -68,15 +68,15 @@ impl TradeRepository for InMemoryTradeRepository {
         let mut storage = self.storage.write().await;
 
         // Check for version conflict if updating
-        if let Some(existing) = storage.get(&trade.id()) {
-            if existing.version() >= trade.version() {
-                return Err(RepositoryError::version_conflict(
-                    "Trade",
-                    trade.id().to_string(),
-                    trade.version(),
-                    existing.version(),
-                ));
-            }
+        if let Some(existing) = storage.get(&trade.id())
+            && existing.version() >= trade.version()
+        {
+            return Err(RepositoryError::version_conflict(
+                "Trade",
+                trade.id().to_string(),
+                trade.version(),
+                existing.version(),
+            ));
         }
 
         storage.insert(trade.id(), trade.clone());

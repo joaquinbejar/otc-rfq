@@ -35,10 +35,10 @@
 //! ```
 
 use crate::api::rest::handlers::{
-    cancel_rfq, create_rfq, get_rfq, get_trade, health_check, list_rfqs, list_trades, list_venues,
-    update_venue, AppState,
+    AppState, cancel_rfq, create_rfq, get_rfq, get_trade, health_check, list_rfqs, list_trades,
+    list_venues, update_venue,
 };
-use axum::{routing::get, routing::put, Router};
+use axum::{Router, routing::get, routing::put};
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;

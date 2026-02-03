@@ -28,10 +28,10 @@
 
 use crate::api::grpc::conversions::ConversionError;
 use crate::api::grpc::proto::{
-    self, rfq_service_server::RfqService, CancelRfqRequest, CancelRfqResponse, CreateRfqRequest,
-    CreateRfqResponse, ExecuteTradeRequest, ExecuteTradeResponse, GetQuotesRequest,
-    GetQuotesResponse, GetRfqRequest, GetRfqResponse, StreamRfqStatusRequest,
-    StreamRfqStatusResponse,
+    self, CancelRfqRequest, CancelRfqResponse, CreateRfqRequest, CreateRfqResponse,
+    ExecuteTradeRequest, ExecuteTradeResponse, GetQuotesRequest, GetQuotesResponse, GetRfqRequest,
+    GetRfqResponse, StreamRfqStatusRequest, StreamRfqStatusResponse,
+    rfq_service_server::RfqService,
 };
 use crate::application::error::ApplicationError;
 use crate::application::use_cases::create_rfq::RfqRepository;
@@ -40,7 +40,7 @@ use crate::domain::value_objects::{CounterpartyId, Instrument, OrderSide, Quanti
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tokio_stream::{wrappers::ReceiverStream, Stream};
+use tokio_stream::{Stream, wrappers::ReceiverStream};
 use tonic::{Request, Response, Status};
 use tracing::{error, info, instrument, warn};
 

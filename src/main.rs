@@ -157,8 +157,8 @@ fn start_grpc_server(
     };
 
     tokio::spawn(async move {
-        use otc_rfq::api::grpc::proto::rfq_service_server::RfqServiceServer;
         use otc_rfq::api::grpc::RfqServiceImpl;
+        use otc_rfq::api::grpc::proto::rfq_service_server::RfqServiceServer;
         use tonic::transport::Server;
 
         let service = RfqServiceImpl::new(rfq_repository);

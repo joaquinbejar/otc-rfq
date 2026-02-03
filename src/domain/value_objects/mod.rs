@@ -55,7 +55,7 @@ pub mod timestamp;
 #[cfg(test)]
 mod tests;
 
-pub use arithmetic::{div_round, ArithmeticError, ArithmeticResult, CheckedArithmetic, Rounding};
+pub use arithmetic::{ArithmeticError, ArithmeticResult, CheckedArithmetic, Rounding, div_round};
 pub use compliance::{ComplianceCheckResults, ComplianceCheckResultsBuilder, RegulatoryFlag};
 pub use enums::{AssetClass, Blockchain, OrderSide, ParseEnumError, SettlementMethod, VenueType};
 pub use ids::{CounterpartyId, EventId, QuoteId, RfqId, TradeId, VenueId};

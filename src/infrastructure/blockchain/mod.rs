@@ -30,11 +30,11 @@ pub use client::{
     BlockchainClient, BlockchainError, BlockchainResult, ChainId, TxHash, TxPriority, TxReceipt,
 };
 pub use config::{
-    parse_chains_config, substitute_env_vars, ChainConfig, ChainConfigBuilder, ChainsConfig,
-    ConfigError, ConfigResult, GasPriceStrategy,
+    ChainConfig, ChainConfigBuilder, ChainsConfig, ConfigError, ConfigResult, GasPriceStrategy,
+    parse_chains_config, substitute_env_vars,
 };
 pub use ethereum::EthereumClient;
 pub use gas::{FeeHistory, GasEstimator, GasPrice};
 pub use tokens::{
-    is_valid_address, normalize_address, TokenError, TokenInfo, TokenRegistry, TokenResult,
+    TokenError, TokenInfo, TokenRegistry, TokenResult, is_valid_address, normalize_address,
 };

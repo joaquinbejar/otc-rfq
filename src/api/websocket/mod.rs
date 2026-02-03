@@ -45,6 +45,6 @@
 pub mod handlers;
 
 pub use handlers::{
-    create_ws_router, Channel, ConnectionParams, IncomingMessage, MessageType, OutgoingMessage,
-    QuoteEvent, RfqStatusEvent, TradeEvent, WebSocketConfig, WebSocketState,
+    Channel, ConnectionParams, IncomingMessage, MessageType, OutgoingMessage, QuoteEvent,
+    RfqStatusEvent, TradeEvent, WebSocketConfig, WebSocketState, create_ws_router,
 };

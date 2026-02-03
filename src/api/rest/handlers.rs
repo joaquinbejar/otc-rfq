@@ -31,9 +31,9 @@ use crate::domain::value_objects::{
     CounterpartyId, Instrument, OrderSide, Quantity, RfqId, RfqState, TradeId, VenueId, VenueType,
 };
 use axum::{
+    Json,
     extract::{Path, Query, State},
     http::StatusCode,
-    Json,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

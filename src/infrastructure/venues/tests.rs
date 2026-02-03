@@ -248,10 +248,12 @@ mod one_inch_tests {
 
         let result = adapter.request_quote(&rfq).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("not yet implemented"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not yet implemented")
+        );
     }
 
     #[tokio::test]
@@ -608,10 +610,12 @@ mod quote_validation_tests {
 
         let result = adapter.execute_trade(&quote).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("not from this venue"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not from this venue")
+        );
     }
 
     #[tokio::test]
@@ -623,10 +627,12 @@ mod quote_validation_tests {
 
         let result = adapter.execute_trade(&quote).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("not from this venue"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not from this venue")
+        );
     }
 
     #[tokio::test]
@@ -638,10 +644,12 @@ mod quote_validation_tests {
 
         let result = adapter.execute_trade(&quote).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("not from this venue"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not from this venue")
+        );
     }
 
     #[tokio::test]

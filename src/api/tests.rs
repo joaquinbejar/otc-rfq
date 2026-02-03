@@ -15,7 +15,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use jsonwebtoken::{encode, EncodingKey, Header};
+use jsonwebtoken::{EncodingKey, Header, encode};
 use serde_json::json;
 
 use crate::api::middleware::auth::{AuthConfig, Claims};
