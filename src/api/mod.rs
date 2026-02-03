@@ -17,6 +17,8 @@
 pub mod grpc;
 pub mod middleware;
 pub mod rest;
+#[cfg(test)]
+mod tests;
 pub mod websocket;
 
 pub use grpc as grpc_api;
