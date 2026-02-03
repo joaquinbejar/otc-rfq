@@ -79,28 +79,38 @@ The OTC RFQ System addresses these challenges by:
 
 ### Supported Venue Types
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                      VENUE ECOSYSTEM                             │
-│                                                                  │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
-│  │  TradFi MMs  │  │     DEX      │  │  RFQ Proto   │          │
-│  │              │  │  Aggregators │  │              │          │
-│  │ • FIX 4.4    │  │              │  │ • Hashflow   │          │
-│  │ • Internal   │  │ • 0x         │  │ • Bebop      │          │
-│  │   Market     │  │ • 1inch      │  │ • Airswap    │          │
-│  │   Makers     │  │ • Paraswap   │  │              │          │
-│  └──────────────┘  └──────────────┘  └──────────────┘          │
-│                                                                  │
-│  ┌──────────────┐  ┌──────────────┐                             │
-│  │   On-Chain   │  │  Settlement  │                             │
-│  │   Protocols  │  │   Options    │                             │
-│  │              │  │              │                             │
-│  │ • Uniswap V3 │  │ • On-chain   │                             │
-│  │ • Curve      │  │ • Off-chain  │                             │
-│  │ • Balancer   │  │ • Hybrid     │                             │
-│  └──────────────┘  └──────────────┘                             │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph VENUE_ECOSYSTEM["🏛️ Venue Ecosystem"]
+        subgraph TRADFI["TradFi MMs"]
+            T1["FIX 4.4"]
+            T2["Internal Market Makers"]
+        end
+        
+        subgraph DEX["DEX Aggregators"]
+            D1["0x"]
+            D2["1inch"]
+            D3["Paraswap"]
+        end
+        
+        subgraph RFQ["RFQ Protocols"]
+            R1["Hashflow"]
+            R2["Bebop"]
+            R3["Airswap"]
+        end
+        
+        subgraph ONCHAIN["On-Chain Protocols"]
+            O1["Uniswap V3"]
+            O2["Curve"]
+            O3["Balancer"]
+        end
+        
+        subgraph SETTLEMENT["Settlement Options"]
+            S1["On-chain"]
+            S2["Off-chain"]
+            S3["Hybrid"]
+        end
+    end
 ```
 
 ### Supported Asset Classes
@@ -186,24 +196,27 @@ flowchart TB
 
 ### Layer Responsibilities
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        API LAYER                                 │
-│  Handles external communication (gRPC, REST, WebSocket)         │
-│  Request/response serialization, authentication, rate limiting  │
-├─────────────────────────────────────────────────────────────────┤
-│                     APPLICATION LAYER                            │
-│  Use cases, orchestration, transaction management               │
-│  No business logic, only coordination                           │
-├─────────────────────────────────────────────────────────────────┤
-│                       DOMAIN LAYER                               │
-│  Core business logic, entities, value objects, domain events    │
-│  Pure Rust, no I/O, no external dependencies                    │
-├─────────────────────────────────────────────────────────────────┤
-│                   INFRASTRUCTURE LAYER                           │
-│  Adapters for external systems (venues, databases, messaging)   │
-│  Implements domain interfaces                                   │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+block-beta
+    columns 1
+    block:API["🌐 API LAYER"]
+        A1["Handles external communication (gRPC, REST, WebSocket)"]
+        A2["Request/response serialization, authentication, rate limiting"]
+    end
+    block:APP["⚙️ APPLICATION LAYER"]
+        B1["Use cases, orchestration, transaction management"]
+        B2["No business logic, only coordination"]
+    end
+    block:DOM["🎯 DOMAIN LAYER"]
+        C1["Core business logic, entities, value objects, domain events"]
+        C2["Pure Rust, no I/O, no external dependencies"]
+    end
+    block:INF["🔧 INFRASTRUCTURE LAYER"]
+        D1["Adapters for external systems (venues, databases, messaging)"]
+        D2["Implements domain interfaces"]
+    end
+    
+    API --> APP --> DOM --> INF
 ```
 
 ---
@@ -212,68 +225,61 @@ flowchart TB
 
 ### RFQ Workflow (Reverse Auction)
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                     REVERSE AUCTION FLOW                             │
-│                                                                      │
-│   1. CLIENT REQUESTS          2. VENUES RESPOND         3. CLIENT   │
-│      QUOTES                      WITH PRICES               SELECTS  │
-│                                                                      │
-│   ┌─────────┐              ┌─────────┐                 ┌─────────┐  │
-│   │ Client  │──RFQ──────▶ │ Venue 1 │ ────Quote────▶ │         │  │
-│   │ (Taker) │              └─────────┘                 │ Best    │  │
-│   │         │              ┌─────────┐                 │ Quote   │  │
-│   │         │──RFQ──────▶ │ Venue 2 │ ────Quote────▶ │ Wins    │  │
-│   │         │              └─────────┘                 │         │  │
-│   │         │              ┌─────────┐                 │         │  │
-│   │         │──RFQ──────▶ │ Venue 3 │ ────Quote────▶ │         │  │
-│   └─────────┘              └─────────┘                 └─────────┘  │
-│                                                                      │
-│   4. EXECUTION                 5. SETTLEMENT                        │
-│                                                                      │
-│   ┌─────────┐              ┌─────────┐                              │
-│   │ Trade   │──Execute──▶ │ Settle  │ ──▶ Assets Exchanged         │
-│   │ Created │              │         │                              │
-│   └─────────┘              └─────────┘                              │
-└─────────────────────────────────────────────────────────────────────┘
+```mermaid
+sequenceDiagram
+    participant Client as 👤 Client (Taker)
+    participant Engine as 🔄 RFQ Engine
+    participant V1 as 🏦 Venue 1
+    participant V2 as 🏦 Venue 2
+    participant V3 as 🏦 Venue 3
+    participant Settlement as 💰 Settlement
+
+    Note over Client,V3: 1. CLIENT REQUESTS QUOTES
+    Client->>Engine: Create RFQ
+    Engine->>V1: Request Quote
+    Engine->>V2: Request Quote
+    Engine->>V3: Request Quote
+
+    Note over Client,V3: 2. VENUES RESPOND WITH PRICES
+    V1-->>Engine: Quote $100.05
+    V2-->>Engine: Quote $100.02
+    V3-->>Engine: Quote $100.08
+
+    Note over Client,V3: 3. CLIENT SELECTS BEST QUOTE
+    Engine-->>Client: Ranked Quotes
+    Client->>Engine: Select Best (Venue 2)
+
+    Note over Client,Settlement: 4. EXECUTION & 5. SETTLEMENT
+    Engine->>V2: Execute Trade
+    V2-->>Engine: Trade Confirmed
+    Engine->>Settlement: Initiate Settlement
+    Settlement-->>Client: Assets Exchanged ✅
 ```
 
 ### RFQ State Machine
 
-```
-                                ┌──────────────┐
-                                │   CREATED    │
-                                └──────┬───────┘
-                                       │
-                    start_quote_collection()
-                                       │
-                                       ▼
-                                ┌──────────────┐
-                     ┌─────────│   QUOTE      │─────────┐
-                     │         │  REQUESTING  │         │
-                     │         └──────┬───────┘         │
-                     │                │                 │
-                timeout/          receive_quote()   cancel()
-                no quotes             │                 │
-                     │                ▼                 │
-                     │         ┌──────────────┐         │
-                     │         │   QUOTES     │         │
-                     ├────────▶│  RECEIVED    │◀────────┤
-                     │         └──────┬───────┘         │
-                     │                │                 │
-                     │          select_quote()          │
-                     │                │                 │
-                     │                ▼                 │
-                     │         ┌──────────────┐         │
-                     │         │  EXECUTING   │─────────┤
-                     │         └──────┬───────┘         │
-                     │                │         │       │
-                     │    mark_executed()  mark_failed()│
-                     │                │         │       │
-                     ▼                ▼         ▼       ▼
-              ┌──────────┐     ┌──────────┐ ┌──────────┐┌──────────┐
-              │ EXPIRED  │     │ EXECUTED │ │  FAILED  ││CANCELLED │
-              └──────────┘     └──────────┘ └──────────┘└──────────┘
+```mermaid
+stateDiagram-v2
+    [*] --> Created
+    
+    Created --> QuoteRequesting: start_quote_collection()
+    
+    QuoteRequesting --> QuotesReceived: receive_quote()
+    QuoteRequesting --> Expired: timeout/no quotes
+    QuoteRequesting --> Cancelled: cancel()
+    
+    QuotesReceived --> Executing: select_quote()
+    QuotesReceived --> Expired: timeout
+    QuotesReceived --> Cancelled: cancel()
+    
+    Executing --> Executed: mark_executed()
+    Executing --> Failed: mark_failed()
+    Executing --> Cancelled: cancel()
+    
+    Expired --> [*]
+    Executed --> [*]
+    Failed --> [*]
+    Cancelled --> [*]
 ```
 
 ### Core Aggregates
@@ -288,24 +294,28 @@ flowchart TB
 
 ### Domain Events
 
-```
-RFQ Lifecycle Events:
-├── RFQCreated
-├── QuoteCollectionStarted
-├── QuoteReceived
-├── QuoteSelected
-├── TradeExecuted
-├── RFQCancelled
-└── RFQExpired
-
-Settlement Events:
-├── SettlementInitiated
-├── SettlementConfirmed
-└── SettlementFailed
-
-Compliance Events:
-├── ComplianceCheckPassed
-└── ComplianceCheckFailed
+```mermaid
+graph LR
+    subgraph RFQ_EVENTS["📋 RFQ Lifecycle Events"]
+        E1[RFQCreated]
+        E2[QuoteCollectionStarted]
+        E3[QuoteReceived]
+        E4[QuoteSelected]
+        E5[TradeExecuted]
+        E6[RFQCancelled]
+        E7[RFQExpired]
+    end
+    
+    subgraph SETTLEMENT_EVENTS["💰 Settlement Events"]
+        S1[SettlementInitiated]
+        S2[SettlementConfirmed]
+        S3[SettlementFailed]
+    end
+    
+    subgraph COMPLIANCE_EVENTS["✅ Compliance Events"]
+        C1[ComplianceCheckPassed]
+        C2[ComplianceCheckFailed]
+    end
 ```
 
 ---
