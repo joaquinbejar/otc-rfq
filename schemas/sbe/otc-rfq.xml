@@ -1,4 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+    OTC RFQ SBE Message Schema
+    
+    This schema defines the binary wire format for domain events in the OTC RFQ system.
+    It is designed to be compatible with the existing implementation in src/infrastructure/sbe/
+    and can be used with IronSBE for code generation.
+    
+    Wire format follows SBE specification:
+    - Message header (8 bytes): blockLength, templateId, schemaId, version
+    - Fixed fields in declaration order
+    - Variable-length fields at the end
+    
+    Schema ID: 1
+    Version: 1
+-->
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
                    package="otc_rfq_sbe"
                    id="1"
@@ -7,141 +22,322 @@
                    description="OTC RFQ SBE Message Schema"
                    byteOrder="littleEndian">
 
-    <!-- Type definitions -->
+    <!-- ========================================================================
+         Type Definitions
+         ======================================================================== -->
     <types>
-        <composite name="messageHeader" description="Message header">
-            <type name="blockLength" primitiveType="uint16"/>
-            <type name="templateId" primitiveType="uint16"/>
-            <type name="schemaId" primitiveType="uint16"/>
-            <type name="version" primitiveType="uint16"/>
+        <!-- Standard SBE message header (8 bytes) -->
+        <composite name="messageHeader" description="SBE message header">
+            <type name="blockLength" primitiveType="uint16" description="Length of fixed fields"/>
+            <type name="templateId" primitiveType="uint16" description="Message template ID"/>
+            <type name="schemaId" primitiveType="uint16" description="Schema ID"/>
+            <type name="version" primitiveType="uint16" description="Schema version"/>
         </composite>
 
-        <composite name="groupSizeEncoding" description="Group size header">
+        <!-- Group size encoding for repeating groups -->
+        <composite name="groupSizeEncoding" description="Repeating group header">
             <type name="blockLength" primitiveType="uint16"/>
             <type name="numInGroup" primitiveType="uint16"/>
         </composite>
 
-        <composite name="varStringEncoding" description="Variable length string">
+        <!-- Variable-length string encoding (length prefix + UTF-8 data) -->
+        <composite name="varStringEncoding" description="Variable length UTF-8 string">
             <type name="length" primitiveType="uint32" maxValue="1073741824"/>
             <type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/>
         </composite>
 
-        <!-- UUID as 16 bytes -->
-        <composite name="uuid" description="UUID as 128-bit value">
-            <type name="high" primitiveType="uint64"/>
-            <type name="low" primitiveType="uint64"/>
+        <!-- UUID as 16 bytes (high u64 + low u64, little-endian) -->
+        <composite name="uuid" description="UUID as 128-bit value (16 bytes)">
+            <type name="high" primitiveType="uint64" description="High 64 bits"/>
+            <type name="low" primitiveType="uint64" description="Low 64 bits"/>
         </composite>
 
-        <!-- Decimal for prices and quantities -->
-        <composite name="decimal" description="Decimal number with mantissa and exponent">
-            <type name="mantissa" primitiveType="int64"/>
-            <type name="exponent" primitiveType="int8"/>
+        <!-- Decimal representation (mantissa i64 + exponent i8 = 9 bytes) -->
+        <composite name="decimal" description="Decimal number (9 bytes)">
+            <type name="mantissa" primitiveType="int64" description="Significand"/>
+            <type name="exponent" primitiveType="int8" description="Scale (negative for decimal places)"/>
         </composite>
 
-        <!-- Timestamp in nanoseconds since epoch -->
-        <type name="timestampNanos" primitiveType="uint64" description="Nanoseconds since Unix epoch"/>
+        <!-- Timestamp in nanoseconds since Unix epoch -->
+        <type name="timestampNanos" primitiveType="uint64" 
+              description="Nanoseconds since Unix epoch (1970-01-01T00:00:00Z)"/>
 
-        <!-- Order side -->
-        <enum name="orderSide" encodingType="uint8">
-            <validValue name="BUY">0</validValue>
-            <validValue name="SELL">1</validValue>
+        <!-- Order side enum -->
+        <enum name="orderSide" encodingType="uint8" description="Order side">
+            <validValue name="BUY" description="Buy order">0</validValue>
+            <validValue name="SELL" description="Sell order">1</validValue>
         </enum>
 
-        <!-- RFQ state -->
-        <enum name="rfqState" encodingType="uint8">
-            <validValue name="CREATED">0</validValue>
-            <validValue name="QUOTE_REQUESTING">1</validValue>
-            <validValue name="QUOTES_RECEIVED">2</validValue>
-            <validValue name="CLIENT_SELECTING">3</validValue>
-            <validValue name="EXECUTING">4</validValue>
-            <validValue name="EXECUTED">5</validValue>
-            <validValue name="FAILED">6</validValue>
-            <validValue name="CANCELLED">7</validValue>
-            <validValue name="EXPIRED">8</validValue>
+        <!-- RFQ state enum -->
+        <enum name="rfqState" encodingType="uint8" description="RFQ lifecycle state">
+            <validValue name="CREATED" description="RFQ created, awaiting quotes">0</validValue>
+            <validValue name="QUOTE_REQUESTING" description="Requesting quotes from venues">1</validValue>
+            <validValue name="QUOTES_RECEIVED" description="Quotes received, awaiting selection">2</validValue>
+            <validValue name="CLIENT_SELECTING" description="Client selecting quote">3</validValue>
+            <validValue name="EXECUTING" description="Trade execution in progress">4</validValue>
+            <validValue name="EXECUTED" description="Trade executed successfully">5</validValue>
+            <validValue name="FAILED" description="RFQ failed">6</validValue>
+            <validValue name="CANCELLED" description="RFQ cancelled">7</validValue>
+            <validValue name="EXPIRED" description="RFQ expired">8</validValue>
         </enum>
 
-        <!-- Venue type -->
-        <enum name="venueType" encodingType="uint8">
-            <validValue name="INTERNAL_MM">0</validValue>
-            <validValue name="EXTERNAL_MM">1</validValue>
-            <validValue name="DEX_AGGREGATOR">2</validValue>
-            <validValue name="PROTOCOL">3</validValue>
-            <validValue name="RFQ_PROTOCOL">4</validValue>
+        <!-- Settlement method enum -->
+        <enum name="settlementMethod" encodingType="uint8" description="Trade settlement method">
+            <validValue name="ON_CHAIN" description="On-chain settlement">0</validValue>
+            <validValue name="OFF_CHAIN" description="Off-chain settlement">1</validValue>
+            <validValue name="HYBRID" description="Hybrid settlement">2</validValue>
+        </enum>
+
+        <!-- Venue type enum -->
+        <enum name="venueType" encodingType="uint8" description="Venue category">
+            <validValue name="INTERNAL_MM" description="Internal market maker">0</validValue>
+            <validValue name="EXTERNAL_MM" description="External market maker (FIX)">1</validValue>
+            <validValue name="DEX_AGGREGATOR" description="DEX aggregator (0x, 1inch)">2</validValue>
+            <validValue name="PROTOCOL" description="On-chain protocol (Uniswap)">3</validValue>
+            <validValue name="RFQ_PROTOCOL" description="RFQ protocol (Hashflow)">4</validValue>
         </enum>
     </types>
 
-    <!-- Message definitions -->
+    <!-- ========================================================================
+         Domain Event Messages
+         ======================================================================== -->
 
-    <!-- RFQ Created Event -->
-    <sbe:message name="RfqCreated" id="1" description="RFQ creation event">
-        <field name="eventId" id="1" type="uuid"/>
-        <field name="rfqId" id="2" type="uuid"/>
-        <field name="clientId" id="3" type="varStringEncoding"/>
-        <field name="symbol" id="4" type="varStringEncoding"/>
-        <field name="side" id="5" type="orderSide"/>
-        <field name="quantity" id="6" type="decimal"/>
-        <field name="expiresAt" id="7" type="timestampNanos"/>
-        <field name="createdAt" id="8" type="timestampNanos"/>
+    <!--
+        RfqCreated Event (Template ID: 1)
+        
+        Emitted when a new RFQ is created.
+        
+        Fixed block length: 58 bytes
+        - eventId: 16 bytes (UUID)
+        - rfqId: 16 bytes (UUID)
+        - side: 1 byte (orderSide)
+        - quantity: 9 bytes (decimal)
+        - expiresAt: 8 bytes (timestampNanos)
+        - createdAt: 8 bytes (timestampNanos)
+        
+        Variable fields:
+        - clientId: varString
+        - symbol: varString
+    -->
+    <sbe:message name="RfqCreated" id="1" blockLength="58" 
+                 description="RFQ creation event">
+        <!-- Fixed fields (58 bytes) -->
+        <field name="eventId" id="1" type="uuid" offset="0" 
+               description="Unique event identifier"/>
+        <field name="rfqId" id="2" type="uuid" offset="16" 
+               description="RFQ identifier"/>
+        <field name="side" id="3" type="orderSide" offset="32" 
+               description="Order side (buy/sell)"/>
+        <field name="quantity" id="4" type="decimal" offset="33" 
+               description="Requested quantity"/>
+        <field name="expiresAt" id="5" type="timestampNanos" offset="42" 
+               description="RFQ expiration time"/>
+        <field name="createdAt" id="6" type="timestampNanos" offset="50" 
+               description="Event creation time"/>
+        
+        <!-- Variable fields -->
+        <data name="clientId" id="7" type="varStringEncoding" 
+              description="Client/counterparty identifier"/>
+        <data name="symbol" id="8" type="varStringEncoding" 
+              description="Trading symbol (e.g., BTC/USD)"/>
     </sbe:message>
 
-    <!-- Quote Received Event -->
-    <sbe:message name="QuoteReceived" id="2" description="Quote received from venue">
-        <field name="eventId" id="1" type="uuid"/>
-        <field name="rfqId" id="2" type="uuid"/>
-        <field name="quoteId" id="3" type="uuid"/>
-        <field name="venueId" id="4" type="varStringEncoding"/>
-        <field name="venueType" id="5" type="venueType"/>
-        <field name="price" id="6" type="decimal"/>
-        <field name="quantity" id="7" type="decimal"/>
-        <field name="commission" id="8" type="decimal"/>
-        <field name="validUntil" id="9" type="timestampNanos"/>
-        <field name="receivedAt" id="10" type="timestampNanos"/>
+    <!--
+        QuoteReceived Event (Template ID: 2)
+        
+        Emitted when a quote is received from a venue.
+        
+        Fixed block length: 82 bytes
+        - eventId: 16 bytes (UUID)
+        - rfqId: 16 bytes (UUID)
+        - quoteId: 16 bytes (UUID)
+        - price: 9 bytes (decimal)
+        - quantity: 9 bytes (decimal)
+        - validUntil: 8 bytes (timestampNanos)
+        - receivedAt: 8 bytes (timestampNanos)
+        
+        Variable fields:
+        - venueId: varString
+    -->
+    <sbe:message name="QuoteReceived" id="2" blockLength="82" 
+                 description="Quote received from venue">
+        <!-- Fixed fields (82 bytes) -->
+        <field name="eventId" id="1" type="uuid" offset="0" 
+               description="Unique event identifier"/>
+        <field name="rfqId" id="2" type="uuid" offset="16" 
+               description="RFQ identifier"/>
+        <field name="quoteId" id="3" type="uuid" offset="32" 
+               description="Quote identifier"/>
+        <field name="price" id="4" type="decimal" offset="48" 
+               description="Quoted price"/>
+        <field name="quantity" id="5" type="decimal" offset="57" 
+               description="Quoted quantity"/>
+        <field name="validUntil" id="6" type="timestampNanos" offset="66" 
+               description="Quote validity expiration"/>
+        <field name="receivedAt" id="7" type="timestampNanos" offset="74" 
+               description="Event timestamp"/>
+        
+        <!-- Variable fields -->
+        <data name="venueId" id="8" type="varStringEncoding" 
+              description="Venue identifier"/>
     </sbe:message>
 
-    <!-- Trade Executed Event -->
-    <sbe:message name="TradeExecuted" id="3" description="Trade execution event">
-        <field name="eventId" id="1" type="uuid"/>
-        <field name="rfqId" id="2" type="uuid"/>
-        <field name="tradeId" id="3" type="uuid"/>
-        <field name="quoteId" id="4" type="uuid"/>
-        <field name="venueId" id="5" type="varStringEncoding"/>
-        <field name="price" id="6" type="decimal"/>
-        <field name="quantity" id="7" type="decimal"/>
-        <field name="venueExecutionRef" id="8" type="varStringEncoding"/>
-        <field name="executedAt" id="9" type="timestampNanos"/>
+    <!--
+        TradeExecuted Event (Template ID: 3)
+        
+        Emitted when a trade is executed.
+        
+        Fixed block length: 90 bytes
+        - eventId: 16 bytes (UUID)
+        - rfqId: 16 bytes (UUID)
+        - tradeId: 16 bytes (UUID)
+        - quoteId: 16 bytes (UUID)
+        - price: 9 bytes (decimal)
+        - quantity: 9 bytes (decimal)
+        - executedAt: 8 bytes (timestampNanos)
+        
+        Variable fields:
+        - venueId: varString
+        - counterpartyId: varString
+    -->
+    <sbe:message name="TradeExecuted" id="3" blockLength="90" 
+                 description="Trade execution event">
+        <!-- Fixed fields (90 bytes) -->
+        <field name="eventId" id="1" type="uuid" offset="0" 
+               description="Unique event identifier"/>
+        <field name="rfqId" id="2" type="uuid" offset="16" 
+               description="RFQ identifier"/>
+        <field name="tradeId" id="3" type="uuid" offset="32" 
+               description="Trade identifier"/>
+        <field name="quoteId" id="4" type="uuid" offset="48" 
+               description="Executed quote identifier"/>
+        <field name="price" id="5" type="decimal" offset="64" 
+               description="Execution price"/>
+        <field name="quantity" id="6" type="decimal" offset="73" 
+               description="Executed quantity"/>
+        <field name="executedAt" id="7" type="timestampNanos" offset="82" 
+               description="Execution timestamp"/>
+        
+        <!-- Variable fields -->
+        <data name="venueId" id="8" type="varStringEncoding" 
+              description="Venue identifier"/>
+        <data name="counterpartyId" id="9" type="varStringEncoding" 
+              description="Counterparty identifier"/>
     </sbe:message>
 
-    <!-- RFQ State Changed Event -->
-    <sbe:message name="RfqStateChanged" id="4" description="RFQ state transition event">
-        <field name="eventId" id="1" type="uuid"/>
-        <field name="rfqId" id="2" type="uuid"/>
-        <field name="previousState" id="3" type="rfqState"/>
-        <field name="newState" id="4" type="rfqState"/>
-        <field name="reason" id="5" type="varStringEncoding"/>
-        <field name="changedAt" id="6" type="timestampNanos"/>
+    <!--
+        RfqStateChanged Event (Template ID: 4)
+        
+        Emitted when an RFQ transitions to a new state.
+        
+        Fixed block length: 36 bytes
+        - eventId: 16 bytes (UUID)
+        - rfqId: 16 bytes (UUID)
+        - previousState: 1 byte (rfqState)
+        - newState: 1 byte (rfqState)
+        - changedAt: 8 bytes (timestampNanos) - moved before variable field
+        
+        Variable fields:
+        - reason: varString
+    -->
+    <sbe:message name="RfqStateChanged" id="4" blockLength="42" 
+                 description="RFQ state transition event">
+        <!-- Fixed fields (42 bytes) -->
+        <field name="eventId" id="1" type="uuid" offset="0" 
+               description="Unique event identifier"/>
+        <field name="rfqId" id="2" type="uuid" offset="16" 
+               description="RFQ identifier"/>
+        <field name="previousState" id="3" type="rfqState" offset="32" 
+               description="Previous RFQ state"/>
+        <field name="newState" id="4" type="rfqState" offset="33" 
+               description="New RFQ state"/>
+        <field name="changedAt" id="5" type="timestampNanos" offset="34" 
+               description="State change timestamp"/>
+        
+        <!-- Variable fields -->
+        <data name="reason" id="6" type="varStringEncoding" 
+              description="Reason for state change"/>
     </sbe:message>
 
-    <!-- Quote Request to Venue -->
-    <sbe:message name="QuoteRequest" id="10" description="Quote request to venue">
-        <field name="requestId" id="1" type="uuid"/>
-        <field name="rfqId" id="2" type="uuid"/>
-        <field name="venueId" id="3" type="varStringEncoding"/>
-        <field name="symbol" id="4" type="varStringEncoding"/>
-        <field name="side" id="5" type="orderSide"/>
-        <field name="quantity" id="6" type="decimal"/>
-        <field name="timeoutMs" id="7" type="uint32"/>
-        <field name="sentAt" id="8" type="timestampNanos"/>
+    <!-- ========================================================================
+         Request/Response Messages (for venue communication)
+         ======================================================================== -->
+
+    <!--
+        QuoteRequest Message (Template ID: 10)
+        
+        Sent to venues to request a quote.
+        
+        Fixed block length: 51 bytes
+        - requestId: 16 bytes (UUID)
+        - rfqId: 16 bytes (UUID)
+        - side: 1 byte (orderSide)
+        - quantity: 9 bytes (decimal)
+        - timeoutMs: 4 bytes (uint32)
+        - sentAt: 8 bytes (timestampNanos) - moved before variable fields
+        
+        Variable fields:
+        - venueId: varString
+        - symbol: varString
+    -->
+    <sbe:message name="QuoteRequest" id="10" blockLength="54" 
+                 description="Quote request to venue">
+        <!-- Fixed fields (54 bytes) -->
+        <field name="requestId" id="1" type="uuid" offset="0" 
+               description="Request correlation ID"/>
+        <field name="rfqId" id="2" type="uuid" offset="16" 
+               description="RFQ identifier"/>
+        <field name="side" id="3" type="orderSide" offset="32" 
+               description="Order side"/>
+        <field name="quantity" id="4" type="decimal" offset="33" 
+               description="Requested quantity"/>
+        <field name="timeoutMs" id="5" type="uint32" offset="42" 
+               description="Request timeout in milliseconds"/>
+        <field name="sentAt" id="6" type="timestampNanos" offset="46" 
+               description="Request send time"/>
+        
+        <!-- Variable fields -->
+        <data name="venueId" id="7" type="varStringEncoding" 
+              description="Target venue identifier"/>
+        <data name="symbol" id="8" type="varStringEncoding" 
+              description="Trading symbol"/>
     </sbe:message>
 
-    <!-- Execution Request to Venue -->
-    <sbe:message name="ExecutionRequest" id="11" description="Trade execution request">
-        <field name="requestId" id="1" type="uuid"/>
-        <field name="rfqId" id="2" type="uuid"/>
-        <field name="quoteId" id="3" type="uuid"/>
-        <field name="venueId" id="4" type="varStringEncoding"/>
-        <field name="price" id="5" type="decimal"/>
-        <field name="quantity" id="6" type="decimal"/>
-        <field name="sentAt" id="7" type="timestampNanos"/>
+    <!--
+        ExecutionRequest Message (Template ID: 11)
+        
+        Sent to venues to execute a trade.
+        
+        Fixed block length: 74 bytes
+        - requestId: 16 bytes (UUID)
+        - rfqId: 16 bytes (UUID)
+        - quoteId: 16 bytes (UUID)
+        - price: 9 bytes (decimal)
+        - quantity: 9 bytes (decimal)
+        - sentAt: 8 bytes (timestampNanos)
+        
+        Variable fields:
+        - venueId: varString
+    -->
+    <sbe:message name="ExecutionRequest" id="11" blockLength="74" 
+                 description="Trade execution request to venue">
+        <!-- Fixed fields (74 bytes) -->
+        <field name="requestId" id="1" type="uuid" offset="0" 
+               description="Request correlation ID"/>
+        <field name="rfqId" id="2" type="uuid" offset="16" 
+               description="RFQ identifier"/>
+        <field name="quoteId" id="3" type="uuid" offset="32" 
+               description="Quote to execute"/>
+        <field name="price" id="4" type="decimal" offset="48" 
+               description="Execution price"/>
+        <field name="quantity" id="5" type="decimal" offset="57" 
+               description="Execution quantity"/>
+        <field name="sentAt" id="6" type="timestampNanos" offset="66" 
+               description="Request send time"/>
+        
+        <!-- Variable fields -->
+        <data name="venueId" id="7" type="varStringEncoding" 
+              description="Target venue identifier"/>
     </sbe:message>
 
 </sbe:messageSchema>
