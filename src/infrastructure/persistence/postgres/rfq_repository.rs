@@ -73,15 +73,16 @@ impl RfqRepository for PostgresRfqRepository {
         let result = sqlx::query(
             r#"
             INSERT INTO rfqs (
-                id, client_id, instrument, side, quantity, state, expires_at,
+                id, client_id, instrument, side, quantity, min_quantity, state, expires_at,
                 quotes, selected_quote_id, compliance_result, failure_reason,
                 version, created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             ON CONFLICT (id) DO UPDATE SET
                 client_id = EXCLUDED.client_id,
                 instrument = EXCLUDED.instrument,
                 side = EXCLUDED.side,
                 quantity = EXCLUDED.quantity,
+                min_quantity = EXCLUDED.min_quantity,
                 state = EXCLUDED.state,
                 expires_at = EXCLUDED.expires_at,
                 quotes = EXCLUDED.quotes,
@@ -98,6 +99,7 @@ impl RfqRepository for PostgresRfqRepository {
         .bind(&instrument_json)
         .bind(&side)
         .bind(quantity)
+        .bind(rfq.min_quantity().map(|q| q.get()))
         .bind(&state)
         .bind(expires_at)
         .bind(&quotes_json)
@@ -140,7 +142,7 @@ impl RfqRepository for PostgresRfqRepository {
 
         let row: Option<RfqRow> = sqlx::query_as(
             r#"
-            SELECT id, client_id, instrument, side, quantity, state, expires_at,
+            SELECT id, client_id, instrument, side, quantity, min_quantity, state, expires_at,
                    quotes, selected_quote_id, compliance_result, failure_reason,
                    version, created_at, updated_at
             FROM rfqs WHERE id = $1
@@ -166,7 +168,7 @@ impl RfqRepository for PostgresRfqRepository {
 
         let rows: Vec<RfqRow> = sqlx::query_as(
             r#"
-            SELECT id, client_id, instrument, side, quantity, state, expires_at,
+            SELECT id, client_id, instrument, side, quantity, min_quantity, state, expires_at,
                    quotes, selected_quote_id, compliance_result, failure_reason,
                    version, created_at, updated_at
             FROM rfqs WHERE state = ANY($1)
@@ -185,7 +187,7 @@ impl RfqRepository for PostgresRfqRepository {
 
         let rows: Vec<RfqRow> = sqlx::query_as(
             r#"
-            SELECT id, client_id, instrument, side, quantity, state, expires_at,
+            SELECT id, client_id, instrument, side, quantity, min_quantity, state, expires_at,
                    quotes, selected_quote_id, compliance_result, failure_reason,
                    version, created_at, updated_at
             FROM rfqs WHERE client_id = $1
@@ -205,7 +207,7 @@ impl RfqRepository for PostgresRfqRepository {
         // Search for RFQs where quotes array contains the venue_id
         let rows: Vec<RfqRow> = sqlx::query_as(
             r#"
-            SELECT id, client_id, instrument, side, quantity, state, expires_at,
+            SELECT id, client_id, instrument, side, quantity, min_quantity, state, expires_at,
                    quotes, selected_quote_id, compliance_result, failure_reason,
                    version, created_at, updated_at
             FROM rfqs WHERE quotes @> $1::jsonb
@@ -268,6 +270,7 @@ struct RfqRow {
     instrument: serde_json::Value,
     side: String,
     quantity: rust_decimal::Decimal,
+    min_quantity: Option<rust_decimal::Decimal>,
     state: String,
     expires_at: i64,
     quotes: serde_json::Value,
@@ -297,7 +300,12 @@ impl RfqRow {
             .map_err(|e| RepositoryError::serialization(e.to_string()))?;
         let side: OrderSide = serde_json::from_str(&format!("\"{}\"", self.side))
             .map_err(|e| RepositoryError::serialization(e.to_string()))?;
-        let quantity = Quantity::new(self.quantity.to_string().parse().unwrap_or(0.0))
+        let quantity = Quantity::from_decimal(self.quantity)
+            .map_err(|e| RepositoryError::serialization(e.to_string()))?;
+        let min_quantity = self
+            .min_quantity
+            .map(Quantity::from_decimal)
+            .transpose()
             .map_err(|e| RepositoryError::serialization(e.to_string()))?;
         let state: RfqState = serde_json::from_str(&format!("\"{}\"", self.state))
             .map_err(|e| RepositoryError::serialization(e.to_string()))?;
@@ -329,7 +337,7 @@ impl RfqRow {
             instrument,
             side,
             quantity,
-            None, // min_quantity — not yet persisted
+            min_quantity,
             state,
             expires_at,
             quotes,

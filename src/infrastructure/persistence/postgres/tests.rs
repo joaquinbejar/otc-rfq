@@ -62,6 +62,7 @@ async fn setup_tables(pool: &PgPool) -> Result<(), sqlx::Error> {
             instrument JSONB NOT NULL,
             side VARCHAR(10) NOT NULL,
             quantity DECIMAL NOT NULL,
+            min_quantity DECIMAL,
             state VARCHAR(50) NOT NULL,
             expires_at BIGINT NOT NULL,
             quotes JSONB NOT NULL DEFAULT '[]',
@@ -326,6 +327,74 @@ async fn rfq_repository_get_nonexistent() {
 
     let result = repo.get(&nonexistent_id).await.unwrap();
     assert!(result.is_none());
+
+    cleanup_tables(&pool).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires PostgreSQL database"]
+async fn rfq_repository_min_quantity_some_survives_round_trip() {
+    let pool = match create_test_pool().await {
+        Some(p) => p,
+        None => return,
+    };
+
+    setup_tables(&pool).await.unwrap();
+    cleanup_tables(&pool).await.unwrap();
+
+    let repo = PostgresRfqRepository::new(pool.clone());
+
+    let symbol = Symbol::new("BTC/USD").unwrap();
+    let instrument = Instrument::builder(symbol, AssetClass::CryptoSpot).build();
+
+    let rfq = RfqBuilder::new(
+        CounterpartyId::new("test-client"),
+        instrument,
+        OrderSide::Buy,
+        Quantity::new(10.0).unwrap(),
+        Timestamp::now().add_secs(3600),
+    )
+    .min_quantity(Quantity::new(5.0).unwrap())
+    .build();
+
+    let rfq_id = rfq.id();
+
+    // Save
+    repo.save(&rfq).await.unwrap();
+
+    // Reload
+    let retrieved = repo.get(&rfq_id).await.unwrap().unwrap();
+
+    // Assert min_quantity survived
+    assert_eq!(retrieved.min_quantity(), Some(Quantity::new(5.0).unwrap()));
+
+    cleanup_tables(&pool).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires PostgreSQL database"]
+async fn rfq_repository_min_quantity_none_remains_none() {
+    let pool = match create_test_pool().await {
+        Some(p) => p,
+        None => return,
+    };
+
+    setup_tables(&pool).await.unwrap();
+    cleanup_tables(&pool).await.unwrap();
+
+    let repo = PostgresRfqRepository::new(pool.clone());
+
+    let rfq = create_test_rfq();
+    let rfq_id = rfq.id();
+
+    // Save (without min_quantity)
+    repo.save(&rfq).await.unwrap();
+
+    // Reload
+    let retrieved = repo.get(&rfq_id).await.unwrap().unwrap();
+
+    // Assert min_quantity is None
+    assert_eq!(retrieved.min_quantity(), None);
 
     cleanup_tables(&pool).await.unwrap();
 }
