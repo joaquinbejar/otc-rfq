@@ -23,11 +23,24 @@
 //! - [`SettlementConfirmed`]: Settlement completed successfully
 //! - [`SettlementFailed`]: Settlement failed
 //!
+//! ## Acceptance Events
+//!
+//! - [`QuoteLocked`]: Quote locked for acceptance
+//! - [`RiskCheckPassed`]: Risk check passed
+//! - [`RiskCheckFailed`]: Risk check failed
+//! - [`LastLookSent`]: Last-look request sent
+//! - [`LastLookConfirmed`]: Last-look confirmed by MM
+//! - [`LastLookRejected`]: Last-look rejected by MM
+//! - [`LastLookTimeout`]: Last-look timed out
+//! - [`AcceptanceCompleted`]: Acceptance flow completed
+//! - [`AcceptanceFailed`]: Acceptance flow failed
+//!
 //! ## Compliance Events
 //!
 //! - [`ComplianceCheckPassed`]: Compliance check passed
 //! - [`ComplianceCheckFailed`]: Compliance check failed
 
+pub mod acceptance_events;
 pub mod allocation_events;
 pub mod compliance_events;
 pub mod domain_event;
@@ -35,6 +48,11 @@ pub mod negotiation_events;
 pub mod rfq_events;
 pub mod trade_events;
 
+pub use acceptance_events::{
+    AcceptanceCompleted, AcceptanceEvent, AcceptanceFailed, LastLookConfirmed, LastLookRejected,
+    LastLookSent, LastLookTimeout, QuoteLocked, RiskCheckFailed as AcceptanceRiskCheckFailed,
+    RiskCheckPassed,
+};
 pub use allocation_events::{
     AllocationEvent, AllocationExecuted, AllocationRolledBack, MultiMmFillAllocated,
 };

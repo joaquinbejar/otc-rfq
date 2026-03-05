@@ -199,9 +199,33 @@ pub enum DomainError {
         target: Quantity,
     },
 
+    /// Quote is already locked by another process.
+    #[error("quote locked: {0}")]
+    QuoteLocked(String),
+
+    /// Failed to acquire lock on quote.
+    #[error("lock acquisition failed: {0}")]
+    LockAcquisitionFailed(String),
+
+    /// Last-look was rejected by market maker.
+    #[error("last-look rejected: {0}")]
+    LastLookRejected(String),
+
+    /// Last-look request timed out.
+    #[error("last-look timeout: {0}")]
+    LastLookTimeout(String),
+
+    /// Acceptance flow timed out.
+    #[error("acceptance timeout: {0}")]
+    AcceptanceTimeout(String),
+
     // ========================================================================
     // Compliance Errors (3000-3999)
     // ========================================================================
+    /// Pre-trade risk check failed.
+    #[error("risk check failed: {0}")]
+    RiskCheckFailed(String),
+
     /// Compliance check blocked the operation.
     #[error("compliance blocked: {0}")]
     ComplianceBlocked(String),
@@ -289,14 +313,20 @@ impl DomainError {
             Self::InsufficientLiquidity { .. } => 2012,
             Self::MinQuantityNotMet { .. } => 2013,
             Self::AllocationMismatch { .. } => 2014,
+            Self::QuoteLocked(_) => 2015,
+            Self::LockAcquisitionFailed(_) => 2016,
+            Self::LastLookRejected(_) => 2017,
+            Self::LastLookTimeout(_) => 2018,
+            Self::AcceptanceTimeout(_) => 2019,
             Self::OperationNotAllowed(_) => 2099,
 
             // Compliance errors (3000-3999)
-            Self::ComplianceBlocked(_) => 3001,
-            Self::KycFailed(_) => 3002,
-            Self::CounterpartyNotAuthorized(_) => 3003,
-            Self::TradingLimitExceeded(_) => 3004,
-            Self::InstrumentNotAllowed(_) => 3005,
+            Self::RiskCheckFailed(_) => 3001,
+            Self::ComplianceBlocked(_) => 3002,
+            Self::KycFailed(_) => 3003,
+            Self::CounterpartyNotAuthorized(_) => 3004,
+            Self::TradingLimitExceeded(_) => 3005,
+            Self::InstrumentNotAllowed(_) => 3006,
 
             // Arithmetic errors (4000-4999)
             Self::Overflow => 4001,
@@ -646,8 +676,9 @@ mod tests {
                 .code(),
                 2014
             );
-            assert_eq!(DomainError::ComplianceBlocked("".to_string()).code(), 3001);
-            assert_eq!(DomainError::KycFailed("".to_string()).code(), 3002);
+            assert_eq!(DomainError::RiskCheckFailed("".to_string()).code(), 3001);
+            assert_eq!(DomainError::ComplianceBlocked("".to_string()).code(), 3002);
+            assert_eq!(DomainError::KycFailed("".to_string()).code(), 3003);
             assert_eq!(DomainError::Overflow.code(), 4001);
             assert_eq!(DomainError::Underflow.code(), 4002);
             assert_eq!(DomainError::DivisionByZero.code(), 4003);
