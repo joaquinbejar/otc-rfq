@@ -43,6 +43,7 @@
 pub mod acceptance_events;
 pub mod allocation_events;
 pub mod compliance_events;
+pub mod conflict_events;
 pub mod domain_event;
 pub mod negotiation_events;
 pub mod rfq_events;
@@ -58,6 +59,7 @@ pub use allocation_events::{
 pub use compliance_events::{
     ComplianceCheckFailed, ComplianceCheckPassed, ComplianceCheckType, ComplianceEvent,
 };
+pub use conflict_events::{ConflictDetectedEvent, ConflictEvent, ConflictResolvedEvent};
 pub use domain_event::{DomainEvent, EventMetadata, EventType};
 pub use negotiation_events::{
     CounterQuoteReceived as NegotiationCounterQuoteReceived, CounterQuoteSent,

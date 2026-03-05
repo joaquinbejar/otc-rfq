@@ -219,6 +219,10 @@ pub enum DomainError {
     #[error("acceptance timeout: {0}")]
     AcceptanceTimeout(String),
 
+    /// Conflict detected during quote acceptance.
+    #[error("conflict detected: {0}")]
+    ConflictDetected(String),
+
     // ========================================================================
     // Compliance Errors (3000-3999)
     // ========================================================================
@@ -318,6 +322,7 @@ impl DomainError {
             Self::LastLookRejected(_) => 2017,
             Self::LastLookTimeout(_) => 2018,
             Self::AcceptanceTimeout(_) => 2019,
+            Self::ConflictDetected(_) => 2020,
             Self::OperationNotAllowed(_) => 2099,
 
             // Compliance errors (3000-3999)
