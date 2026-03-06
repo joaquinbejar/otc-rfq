@@ -217,6 +217,7 @@ impl Quote {
         valid_until: Timestamp,
         metadata: Option<QuoteMetadata>,
         created_at: Timestamp,
+        last_look_required: bool,
     ) -> Self {
         Self {
             id,
@@ -228,7 +229,7 @@ impl Quote {
             valid_until,
             metadata,
             created_at,
-            last_look_required: false,
+            last_look_required,
         }
     }
 

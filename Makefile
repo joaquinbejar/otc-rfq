@@ -107,8 +107,8 @@ pre-push: fix fmt lint-fix test doc
 
 .PHONY: doc
 doc:
-	@echo "📚 Generating documentation..."
-	cargo doc --no-deps --document-private-items
+	@echo "📚 Generating documentation (with warnings as errors)..."
+	RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
 
 .PHONY: doc-open
 doc-open:

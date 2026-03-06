@@ -11,8 +11,8 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::RwLock;
 use std::time::Duration;
+use tokio::sync::RwLock;
 
 /// Configuration for FIX last-look client.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,10 +75,9 @@ impl FixLastLookClient {
     }
 
     /// Registers a venue as requiring last-look.
-    pub fn register_venue(&self, venue_id: &VenueId, requires: bool) {
-        if let Ok(mut guard) = self.venues_requiring_last_look.write() {
-            guard.insert(venue_id.to_string(), requires);
-        }
+    pub async fn register_venue(&self, venue_id: &VenueId, requires: bool) {
+        let mut guard = self.venues_requiring_last_look.write().await;
+        guard.insert(venue_id.to_string(), requires);
     }
 
     /// Returns the FIX session identifier.
@@ -105,30 +104,28 @@ impl LastLookService for FixLastLookClient {
     }
 
     fn requires_last_look(&self, venue_id: &VenueId) -> bool {
+        // Use try_read for sync method - returns false if lock is contended
         self.venues_requiring_last_look
-            .read()
+            .try_read()
             .ok()
             .and_then(|guard| guard.get(&venue_id.to_string()).copied())
             .unwrap_or(false)
     }
 
     async fn get_stats(&self, venue_id: &VenueId) -> Option<LastLookStats> {
-        self.stats
-            .read()
-            .ok()
-            .and_then(|guard| guard.get(&venue_id.to_string()).cloned())
+        let guard = self.stats.read().await;
+        guard.get(&venue_id.to_string()).cloned()
     }
 
     async fn record_result(&self, venue_id: &VenueId, result: &LastLookResult) {
-        if let Ok(mut guard) = self.stats.write() {
-            let stats = guard
-                .entry(venue_id.to_string())
-                .or_insert_with(LastLookStats::new);
-            match result {
-                LastLookResult::Confirmed { .. } => stats.record_confirmation(),
-                LastLookResult::Rejected { .. } => stats.record_rejection(),
-                LastLookResult::Timeout { .. } => stats.record_timeout(),
-            }
+        let mut guard = self.stats.write().await;
+        let stats = guard
+            .entry(venue_id.to_string())
+            .or_insert_with(LastLookStats::new);
+        match result {
+            LastLookResult::Confirmed { .. } => stats.record_confirmation(),
+            LastLookResult::Rejected { .. } => stats.record_rejection(),
+            LastLookResult::Timeout { .. } => stats.record_timeout(),
         }
     }
 }
@@ -161,14 +158,14 @@ mod tests {
         assert!(session_id.contains("SERVER"));
     }
 
-    #[test]
-    fn register_venue() {
+    #[tokio::test]
+    async fn register_venue() {
         let client = FixLastLookClient::new(FixLastLookConfig::default());
         let venue = VenueId::new("test-venue");
 
         assert!(!client.requires_last_look(&venue));
 
-        client.register_venue(&venue, true);
+        client.register_venue(&venue, true).await;
         assert!(client.requires_last_look(&venue));
     }
 }

@@ -490,7 +490,7 @@ mod tests {
         assert!(result.is_rejected());
         assert!(matches!(
             result.rejection_reason(),
-            Some(LastLookRejectReason::Other(_))
+            Some(&LastLookRejectReason::Other(_))
         ));
     }
 

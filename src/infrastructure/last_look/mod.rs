@@ -1,6 +1,7 @@
 //! # Last-Look Infrastructure
 //!
-//! Channel-specific implementations of the [`LastLookService`] trait.
+//! Channel-specific implementations of the
+//! [`LastLookService`](crate::domain::services::LastLookService) trait.
 //!
 //! This module provides concrete implementations for different communication
 //! channels used to send last-look requests to market makers:
