@@ -530,6 +530,10 @@ impl BlockTrade {
     /// Starts validation of the block trade.
     ///
     /// Transitions from `Submitted` to `Validating`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the trade is not in `Submitted` state.
     pub fn start_validation(&mut self) -> DomainResult<()> {
         self.transition_to(BlockTradeState::Validating)
     }
@@ -538,6 +542,10 @@ impl BlockTrade {
     ///
     /// If validation passes, the trade remains in `Validating` state
     /// until both parties confirm.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the trade is not in `Validating` state.
     pub fn record_validation(
         &mut self,
         result: BlockTradeValidation,
@@ -623,6 +631,10 @@ impl BlockTrade {
     /// Starts execution of the approved trade.
     ///
     /// Transitions from `Approved` to `Executing`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the trade is not in `Approved` state.
     pub fn start_execution(&mut self) -> DomainResult<()> {
         self.transition_to(BlockTradeState::Executing)
     }
@@ -630,6 +642,10 @@ impl BlockTrade {
     /// Marks the trade as successfully executed.
     ///
     /// Transitions from `Executing` to `Executed`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the trade is not in `Executing` state.
     pub fn mark_executed(&mut self) -> DomainResult<()> {
         self.transition_to(BlockTradeState::Executed)
     }
@@ -637,6 +653,10 @@ impl BlockTrade {
     /// Marks the trade as failed.
     ///
     /// Transitions from `Executing` to `Failed`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the trade is not in `Executing` state.
     pub fn mark_failed(&mut self, reason: &str) -> DomainResult<()> {
         self.rejection_reason = Some(reason.to_string());
         self.transition_to(BlockTradeState::Failed)
@@ -645,6 +665,10 @@ impl BlockTrade {
     /// Rejects the trade.
     ///
     /// Can be called from `Validating` or `Approved` states.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the trade is not in a rejectable state.
     pub fn reject(&mut self, reason: &str) -> DomainResult<()> {
         self.rejection_reason = Some(reason.to_string());
         self.transition_to(BlockTradeState::Rejected)
