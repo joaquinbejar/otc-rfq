@@ -112,6 +112,9 @@ pub struct BlockTradeValidationContext {
     /// Reference price for the instrument (if available).
     pub reference_price: Option<Price>,
     /// Whether the instrument is currently tradeable.
+    ///
+    /// TODO: Add liquidation status check once the field exists on Counterparty.
+    /// See issue for adding is_in_liquidation field to Counterparty entity.
     pub instrument_tradeable: bool,
     /// Reason if instrument is not tradeable.
     pub instrument_halt_reason: Option<String>,
@@ -320,7 +323,13 @@ impl DefaultBlockTradeValidator {
             return Ok(()); // Can't calculate deviation from zero
         }
 
-        let deviation = (proposed_dec - reference_dec).abs() / reference_dec;
+        let deviation = match (proposed_dec - reference_dec)
+            .abs()
+            .checked_div(reference_dec)
+        {
+            Some(d) => d,
+            None => return Ok(()), // Division failed, skip validation
+        };
 
         if deviation > max_deviation {
             return Err(BlockTradeValidationFailure::PriceOutOfBounds {

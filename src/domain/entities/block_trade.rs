@@ -38,6 +38,11 @@
 //! ```
 
 use crate::domain::errors::{DomainError, DomainResult};
+use crate::domain::events::DomainEvent;
+use crate::domain::events::block_trade_events::{
+    BlockTradeApproved, BlockTradeConfirmed, BlockTradeExecuted, BlockTradeFailed,
+    BlockTradeRejected, BlockTradeRole, BlockTradeSubmitted, BlockTradeValidated,
+};
 use crate::domain::services::ReportingTier;
 use crate::domain::value_objects::timestamp::Timestamp;
 use crate::domain::value_objects::{CounterpartyId, Instrument, Price, Quantity};
@@ -276,7 +281,7 @@ impl Default for BlockTradeValidation {
 /// 2. Platform validates eligibility, collateral, price, instrument
 /// 3. Both parties confirm
 /// 4. Trade is approved and can be executed
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct BlockTrade {
     /// Unique identifier.
     id: BlockTradeId,
@@ -308,7 +313,56 @@ pub struct BlockTrade {
     updated_at: Timestamp,
     /// Rejection reason, if rejected.
     rejection_reason: Option<String>,
+    /// Pending domain events to be dispatched.
+    #[serde(skip)]
+    pending_events: Vec<Box<dyn DomainEvent>>,
 }
+
+impl Clone for BlockTrade {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id,
+            buyer_id: self.buyer_id.clone(),
+            seller_id: self.seller_id.clone(),
+            instrument: self.instrument.clone(),
+            price: self.price,
+            quantity: self.quantity,
+            state: self.state,
+            reporting_tier: self.reporting_tier,
+            buyer_confirmed: self.buyer_confirmed,
+            seller_confirmed: self.seller_confirmed,
+            validation_result: self.validation_result.clone(),
+            agreed_at: self.agreed_at,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            rejection_reason: self.rejection_reason.clone(),
+            pending_events: Vec::new(), // Don't clone events
+        }
+    }
+}
+
+impl PartialEq for BlockTrade {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.buyer_id == other.buyer_id
+            && self.seller_id == other.seller_id
+            && self.instrument == other.instrument
+            && self.price == other.price
+            && self.quantity == other.quantity
+            && self.state == other.state
+            && self.reporting_tier == other.reporting_tier
+            && self.buyer_confirmed == other.buyer_confirmed
+            && self.seller_confirmed == other.seller_confirmed
+            && self.validation_result == other.validation_result
+            && self.agreed_at == other.agreed_at
+            && self.created_at == other.created_at
+            && self.updated_at == other.updated_at
+            && self.rejection_reason == other.rejection_reason
+        // Ignore pending_events in equality
+    }
+}
+
+impl Eq for BlockTrade {}
 
 impl BlockTrade {
     /// Creates a new block trade submission.
@@ -321,6 +375,10 @@ impl BlockTrade {
     /// * `price` - The agreed price
     /// * `quantity` - The agreed quantity
     /// * `agreed_at` - When the parties agreed on terms
+    ///
+    /// # Panics
+    ///
+    /// Panics if `agreed_at` is in the future (after the current time).
     #[must_use]
     pub fn new(
         buyer_id: CounterpartyId,
@@ -331,11 +389,20 @@ impl BlockTrade {
         agreed_at: Timestamp,
     ) -> Self {
         let now = Timestamp::now();
-        Self {
-            id: BlockTradeId::new_v4(),
-            buyer_id,
-            seller_id,
-            instrument,
+
+        // Validate that agreed_at is not in the future relative to created_at
+        assert!(
+            agreed_at <= now,
+            "agreed_at timestamp cannot be after created_at"
+        );
+
+        let id = BlockTradeId::new_v4();
+
+        let mut trade = Self {
+            id,
+            buyer_id: buyer_id.clone(),
+            seller_id: seller_id.clone(),
+            instrument: instrument.clone(),
             price,
             quantity,
             state: BlockTradeState::Submitted,
@@ -347,7 +414,14 @@ impl BlockTrade {
             created_at: now,
             updated_at: now,
             rejection_reason: None,
-        }
+            pending_events: Vec::new(),
+        };
+
+        trade.add_event(BlockTradeSubmitted::new(
+            id, buyer_id, seller_id, instrument, price, quantity, agreed_at,
+        ));
+
+        trade
     }
 
     /// Creates a block trade with a specific ID (for reconstruction from storage).
@@ -391,6 +465,7 @@ impl BlockTrade {
             created_at,
             updated_at,
             rejection_reason,
+            pending_events: Vec::new(),
         }
     }
 
@@ -510,6 +585,17 @@ impl BlockTrade {
         self.rejection_reason.as_deref()
     }
 
+    /// Returns pending domain events and clears the internal list.
+    #[must_use]
+    pub fn take_events(&mut self) -> Vec<Box<dyn DomainEvent>> {
+        std::mem::take(&mut self.pending_events)
+    }
+
+    /// Adds a domain event to the pending events list.
+    fn add_event<E: DomainEvent + 'static>(&mut self, event: E) {
+        self.pending_events.push(Box::new(event));
+    }
+
     // =========================================================================
     // State Transitions
     // =========================================================================
@@ -559,14 +645,21 @@ impl BlockTrade {
         }
 
         self.reporting_tier = reporting_tier;
+        let passed = result.is_valid();
 
-        if !result.is_valid() {
+        if !passed {
             let reason = result.failure_reasons.join("; ");
-            self.rejection_reason = Some(reason);
-            self.validation_result = Some(result);
+            self.rejection_reason = Some(reason.clone());
+            self.validation_result = Some(result.clone());
             self.transition_to(BlockTradeState::Rejected)?;
+            self.add_event(BlockTradeRejected::new(
+                self.id,
+                reason,
+                BlockTradeState::Validating,
+            ));
         } else {
-            self.validation_result = Some(result);
+            self.validation_result = Some(result.clone());
+            self.add_event(BlockTradeValidated::new(self.id, result, reporting_tier));
         }
 
         Ok(())
@@ -607,22 +700,34 @@ impl BlockTrade {
             ));
         }
 
-        // Record confirmation
-        if counterparty_id == &self.buyer_id {
+        // Record confirmation and determine role
+        let role = if counterparty_id == &self.buyer_id {
             self.buyer_confirmed = true;
+            BlockTradeRole::Buyer
         } else if counterparty_id == &self.seller_id {
             self.seller_confirmed = true;
+            BlockTradeRole::Seller
         } else {
             return Err(DomainError::UnauthorizedCounterparty(
                 counterparty_id.to_string(),
             ));
-        }
+        };
 
         self.updated_at = Timestamp::now();
 
         // If both confirmed, transition to Approved
+        self.add_event(BlockTradeConfirmed::new(
+            self.id,
+            counterparty_id.clone(),
+            role,
+            self.is_fully_confirmed(),
+        ));
+
         if self.is_fully_confirmed() {
             self.transition_to(BlockTradeState::Approved)?;
+            if let Some(tier) = self.reporting_tier {
+                self.add_event(BlockTradeApproved::new(self.id, tier));
+            }
         }
 
         Ok(())
@@ -647,7 +752,16 @@ impl BlockTrade {
     ///
     /// Returns an error if the trade is not in `Executing` state.
     pub fn mark_executed(&mut self) -> DomainResult<()> {
-        self.transition_to(BlockTradeState::Executed)
+        self.transition_to(BlockTradeState::Executed)?;
+        if let Some(tier) = self.reporting_tier {
+            self.add_event(BlockTradeExecuted::new(
+                self.id,
+                self.price,
+                self.quantity,
+                tier,
+            ));
+        }
+        Ok(())
     }
 
     /// Marks the trade as failed.
@@ -659,7 +773,9 @@ impl BlockTrade {
     /// Returns an error if the trade is not in `Executing` state.
     pub fn mark_failed(&mut self, reason: &str) -> DomainResult<()> {
         self.rejection_reason = Some(reason.to_string());
-        self.transition_to(BlockTradeState::Failed)
+        self.transition_to(BlockTradeState::Failed)?;
+        self.add_event(BlockTradeFailed::new(self.id, reason.to_string()));
+        Ok(())
     }
 
     /// Rejects the trade.
@@ -670,8 +786,15 @@ impl BlockTrade {
     ///
     /// Returns an error if the trade is not in a rejectable state.
     pub fn reject(&mut self, reason: &str) -> DomainResult<()> {
+        let from_state = self.state;
         self.rejection_reason = Some(reason.to_string());
-        self.transition_to(BlockTradeState::Rejected)
+        self.transition_to(BlockTradeState::Rejected)?;
+        self.add_event(BlockTradeRejected::new(
+            self.id,
+            reason.to_string(),
+            from_state,
+        ));
+        Ok(())
     }
 }
 
