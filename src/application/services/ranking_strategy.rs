@@ -466,14 +466,9 @@ impl RankingWeights {
 /// # Example
 ///
 /// ```ignore
-/// use otc_rfq::application::services::ranking_strategy::{
-///     WeightedMultiFactorStrategy, RankingWeights,
-/// };
+/// use otc_rfq::application::services::ranking_strategy::WeightedMultiFactorStrategy;
 ///
-/// let strategy = WeightedMultiFactorStrategy::new(
-///     RankingWeights::default(),
-///     mm_tracker,
-/// );
+/// let strategy = WeightedMultiFactorStrategy::new();
 /// ```
 #[derive(Debug)]
 pub struct WeightedMultiFactorStrategy {
@@ -533,14 +528,16 @@ impl WeightedMultiFactorStrategy {
     /// Computes reliability score from response_rate_pct and reject_rate_pct.
     ///
     /// Formula: (response_rate/100 + (1 - reject_rate/100)) / 2
+    /// Result is clamped to [0.0, 1.0].
     #[must_use]
     pub fn compute_reliability_score(
         response_rate_pct: Option<f64>,
         reject_rate_pct: Option<f64>,
     ) -> f64 {
-        let response_rate = response_rate_pct.unwrap_or(50.0) / 100.0; // Default 50% if unknown
-        let reject_rate = reject_rate_pct.unwrap_or(0.0) / 100.0; // Default 0% if unknown
-        (response_rate + (1.0 - reject_rate)) / 2.0
+        // Clamp inputs to valid percentage range
+        let response_rate = response_rate_pct.unwrap_or(50.0).clamp(0.0, 100.0) / 100.0;
+        let reject_rate = reject_rate_pct.unwrap_or(0.0).clamp(0.0, 100.0) / 100.0;
+        ((response_rate + (1.0 - reject_rate)) / 2.0).clamp(0.0, 1.0)
     }
 
     /// Normalizes price score to [0, 1] where 1 is best.
@@ -560,12 +557,13 @@ impl WeightedMultiFactorStrategy {
         }
     }
 
-    /// Gets reliability score for a venue.
+    /// Gets reliability score for a venue, clamped to [0.0, 1.0].
     fn reliability_score(&self, venue_id: &str) -> f64 {
         self.reliability_scores
             .get(venue_id)
             .copied()
             .unwrap_or(0.5) // Default to neutral 0.5 for unknown venues
+            .clamp(0.0, 1.0)
     }
 
     /// Computes freshness score based on quote age.
@@ -598,7 +596,10 @@ impl RankingStrategy for WeightedMultiFactorStrategy {
             .iter()
             .map(|q| q.quantity().get().to_f64().unwrap_or(0.0))
             .collect();
-        let timestamps: Vec<i64> = quotes.iter().map(|q| q.created_at().timestamp_millis()).collect();
+        let timestamps: Vec<i64> = quotes
+            .iter()
+            .map(|q| q.created_at().timestamp_millis())
+            .collect();
 
         // Find min/max for normalization
         let min_price = prices.iter().cloned().fold(f64::INFINITY, f64::min);
@@ -1233,13 +1234,84 @@ mod tests {
 
     #[test]
     fn weighted_multi_factor_add_reliability_score() {
-        let mut strategy = WeightedMultiFactorStrategy::new();
-        strategy.add_reliability_score("venue-1", 0.9);
+        // Strategy with an explicit reliability score for venue-1
+        let mut strategy_with_reliability = WeightedMultiFactorStrategy::new();
+        strategy_with_reliability.add_reliability_score("venue-1", 0.9);
+
+        // Baseline strategy using default/neutral reliability for venue-1
+        let strategy_default = WeightedMultiFactorStrategy::new();
 
         let quotes = vec![create_quote(100.0, 1.0, "venue-1")];
+
+        let ranked_with_reliability = strategy_with_reliability.rank(&quotes, OrderSide::Buy);
+        let ranked_default = strategy_default.rank(&quotes, OrderSide::Buy);
+
+        assert_eq!(ranked_with_reliability.len(), 1);
+        assert_eq!(ranked_default.len(), 1);
+
+        // The custom reliability score (0.9) should increase the final score
+        // compared to the default/neutral reliability (0.5) used by strategy_default.
+        assert!(
+            ranked_with_reliability[0].score > ranked_default[0].score,
+            "Expected custom reliability score to produce a higher ranking score"
+        );
+    }
+
+    #[test]
+    fn weighted_multi_factor_freshness_affects_ordering() {
+        // Use 100% freshness weight to isolate the freshness factor
+        let weights = RankingWeights::new(0.0, 0.0, 0.0, 1.0);
+        let strategy = WeightedMultiFactorStrategy::with_weights(weights);
+
+        // Create quotes with different timestamps
+        // Note: create_quote uses Timestamp::now(), so we need quotes created at different times
+        let quote1 = create_quote(100.0, 1.0, "venue-1"); // Created first (older)
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let quote2 = create_quote(100.0, 1.0, "venue-2"); // Created second (newer)
+
+        let quotes = vec![quote1, quote2];
         let ranked = strategy.rank(&quotes, OrderSide::Buy);
 
-        assert_eq!(ranked.len(), 1);
-        // Should use the added reliability score
+        assert_eq!(ranked.len(), 2);
+        // With 100% freshness weight, the newer quote (venue-2) should rank first
+        assert_eq!(ranked[0].quote.venue_id().as_str(), "venue-2");
+        assert_eq!(ranked[1].quote.venue_id().as_str(), "venue-1");
+        // Newer quote should have higher score
+        assert!(ranked[0].score > ranked[1].score);
+    }
+
+    #[test]
+    fn compute_reliability_score_clamps_out_of_range() {
+        // Test clamping when inputs exceed valid range
+        let score =
+            WeightedMultiFactorStrategy::compute_reliability_score(Some(150.0), Some(-10.0));
+        // 150% clamped to 100%, -10% clamped to 0%
+        // (1.0 + 1.0) / 2 = 1.0
+        assert!((score - 1.0).abs() < f64::EPSILON);
+
+        let score2 =
+            WeightedMultiFactorStrategy::compute_reliability_score(Some(-50.0), Some(200.0));
+        // -50% clamped to 0%, 200% clamped to 100%
+        // (0.0 + 0.0) / 2 = 0.0
+        assert!((score2 - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn reliability_score_clamps_invalid_values() {
+        let mut strategy = WeightedMultiFactorStrategy::new();
+        strategy.add_reliability_score("venue-high", 1.5); // Above 1.0
+        strategy.add_reliability_score("venue-low", -0.5); // Below 0.0
+
+        // Same price/qty, reliability should differentiate but be clamped
+        let quotes = vec![
+            create_quote(100.0, 1.0, "venue-high"),
+            create_quote(100.0, 1.0, "venue-low"),
+        ];
+
+        let ranked = strategy.rank(&quotes, OrderSide::Buy);
+
+        // venue-high (clamped to 1.0) should rank above venue-low (clamped to 0.0)
+        assert_eq!(ranked[0].quote.venue_id().as_str(), "venue-high");
+        assert_eq!(ranked[1].quote.venue_id().as_str(), "venue-low");
     }
 }
