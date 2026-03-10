@@ -31,7 +31,8 @@ pub use quote_aggregation::{
 };
 pub use ranking_strategy::{
     BestPriceStrategy, CompositeStrategy, CompositeStrategyBuilder, CostConfig, LowestCostStrategy,
-    LowestSlippageStrategy, RankedQuote, RankingStrategy, WeightedScoreStrategy,
+    LowestSlippageStrategy, RankedQuote, RankingStrategy, RankingWeights,
+    WeightedMultiFactorStrategy, WeightedScoreStrategy,
 };
 pub use retry::{
     AlwaysRetryable, NeverRetryable, RetryError, RetryPolicy, RetryResult, Retryable,

@@ -409,6 +409,246 @@ impl RankingStrategy for LowestCostStrategy {
     }
 }
 
+/// Configurable weights for multi-factor ranking.
+///
+/// Weights should sum to approximately 1.0 for proper normalization,
+/// but this is not enforced.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RankingWeights {
+    /// Weight for price factor (default 0.70).
+    pub price: f64,
+    /// Weight for quantity factor (default 0.15).
+    pub quantity: f64,
+    /// Weight for reliability factor (default 0.10).
+    pub reliability: f64,
+    /// Weight for freshness factor (default 0.05).
+    pub freshness: f64,
+}
+
+impl Default for RankingWeights {
+    fn default() -> Self {
+        Self {
+            price: 0.70,
+            quantity: 0.15,
+            reliability: 0.10,
+            freshness: 0.05,
+        }
+    }
+}
+
+impl RankingWeights {
+    /// Creates new ranking weights.
+    #[must_use]
+    pub fn new(price: f64, quantity: f64, reliability: f64, freshness: f64) -> Self {
+        Self {
+            price,
+            quantity,
+            reliability,
+            freshness,
+        }
+    }
+
+    /// Returns the sum of all weights.
+    #[must_use]
+    pub fn sum(&self) -> f64 {
+        self.price + self.quantity + self.reliability + self.freshness
+    }
+}
+
+/// Weighted multi-factor ranking strategy.
+///
+/// Ranks quotes using a weighted combination of four factors:
+/// - **Price** (default 70%): Best price scores highest
+/// - **Quantity** (default 15%): Ratio of quoted to requested quantity
+/// - **Reliability** (default 10%): MM response rate and reject rate
+/// - **Freshness** (default 5%): Newest quotes score highest
+///
+/// # Example
+///
+/// ```ignore
+/// use otc_rfq::application::services::ranking_strategy::{
+///     WeightedMultiFactorStrategy, RankingWeights,
+/// };
+///
+/// let strategy = WeightedMultiFactorStrategy::new(
+///     RankingWeights::default(),
+///     mm_tracker,
+/// );
+/// ```
+#[derive(Debug)]
+pub struct WeightedMultiFactorStrategy {
+    weights: RankingWeights,
+    /// Reliability scores by venue ID (pre-computed or fetched).
+    /// Maps venue_id string to reliability score [0.0, 1.0].
+    reliability_scores: std::collections::HashMap<String, f64>,
+    /// Requested quantity for quantity score normalization.
+    requested_quantity: Option<f64>,
+}
+
+impl WeightedMultiFactorStrategy {
+    /// Creates a new weighted multi-factor strategy with default weights.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            weights: RankingWeights::default(),
+            reliability_scores: std::collections::HashMap::new(),
+            requested_quantity: None,
+        }
+    }
+
+    /// Creates a new strategy with custom weights.
+    #[must_use]
+    pub fn with_weights(weights: RankingWeights) -> Self {
+        Self {
+            weights,
+            reliability_scores: std::collections::HashMap::new(),
+            requested_quantity: None,
+        }
+    }
+
+    /// Sets the requested quantity for quantity score calculation.
+    #[must_use]
+    pub fn with_requested_quantity(mut self, quantity: f64) -> Self {
+        self.requested_quantity = Some(quantity);
+        self
+    }
+
+    /// Sets reliability scores for venues.
+    ///
+    /// Reliability score should be in [0.0, 1.0] range.
+    #[must_use]
+    pub fn with_reliability_scores(
+        mut self,
+        scores: std::collections::HashMap<String, f64>,
+    ) -> Self {
+        self.reliability_scores = scores;
+        self
+    }
+
+    /// Adds a reliability score for a specific venue.
+    pub fn add_reliability_score(&mut self, venue_id: &str, score: f64) {
+        self.reliability_scores.insert(venue_id.to_string(), score);
+    }
+
+    /// Computes reliability score from response_rate_pct and reject_rate_pct.
+    ///
+    /// Formula: (response_rate/100 + (1 - reject_rate/100)) / 2
+    #[must_use]
+    pub fn compute_reliability_score(
+        response_rate_pct: Option<f64>,
+        reject_rate_pct: Option<f64>,
+    ) -> f64 {
+        let response_rate = response_rate_pct.unwrap_or(50.0) / 100.0; // Default 50% if unknown
+        let reject_rate = reject_rate_pct.unwrap_or(0.0) / 100.0; // Default 0% if unknown
+        (response_rate + (1.0 - reject_rate)) / 2.0
+    }
+
+    /// Normalizes price score to [0, 1] where 1 is best.
+    fn normalize_price(&self, price: f64, min_price: f64, max_price: f64, side: OrderSide) -> f64 {
+        let price_range = (max_price - min_price).max(f64::EPSILON);
+        match side {
+            OrderSide::Buy => (max_price - price) / price_range, // Lower is better
+            OrderSide::Sell => (price - min_price) / price_range, // Higher is better
+        }
+    }
+
+    /// Computes quantity score as ratio to requested quantity (capped at 1.0).
+    fn quantity_score(&self, quoted_qty: f64) -> f64 {
+        match self.requested_quantity {
+            Some(requested) if requested > 0.0 => (quoted_qty / requested).min(1.0),
+            _ => 1.0, // If no requested quantity, assume full fill
+        }
+    }
+
+    /// Gets reliability score for a venue.
+    fn reliability_score(&self, venue_id: &str) -> f64 {
+        self.reliability_scores
+            .get(venue_id)
+            .copied()
+            .unwrap_or(0.5) // Default to neutral 0.5 for unknown venues
+    }
+
+    /// Computes freshness score based on quote age.
+    /// Newest quote gets 1.0, oldest gets 0.0.
+    fn freshness_score(&self, quote_created_at: i64, oldest: i64, newest: i64) -> f64 {
+        let age_range = (newest - oldest).max(1);
+        let quote_age = newest - quote_created_at;
+        1.0 - (quote_age as f64 / age_range as f64)
+    }
+}
+
+impl Default for WeightedMultiFactorStrategy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RankingStrategy for WeightedMultiFactorStrategy {
+    fn rank(&self, quotes: &[Quote], side: OrderSide) -> Vec<RankedQuote> {
+        if quotes.is_empty() {
+            return Vec::new();
+        }
+
+        // Extract prices and quantities
+        let prices: Vec<f64> = quotes
+            .iter()
+            .map(|q| q.price().get().to_f64().unwrap_or(0.0))
+            .collect();
+        let quantities: Vec<f64> = quotes
+            .iter()
+            .map(|q| q.quantity().get().to_f64().unwrap_or(0.0))
+            .collect();
+        let timestamps: Vec<i64> = quotes.iter().map(|q| q.created_at().timestamp_millis()).collect();
+
+        // Find min/max for normalization
+        let min_price = prices.iter().cloned().fold(f64::INFINITY, f64::min);
+        let max_price = prices.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let oldest_ts = timestamps.iter().cloned().min().unwrap_or(0);
+        let newest_ts = timestamps.iter().cloned().max().unwrap_or(0);
+
+        // Score each quote
+        let mut scored: Vec<(usize, f64)> = quotes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, q)| {
+                let price = prices.get(i)?;
+                let qty = quantities.get(i)?;
+                let ts = timestamps.get(i)?;
+
+                let price_score = self.normalize_price(*price, min_price, max_price, side);
+                let qty_score = self.quantity_score(*qty);
+                let reliability = self.reliability_score(q.venue_id().as_str());
+                let freshness = self.freshness_score(*ts, oldest_ts, newest_ts);
+
+                let total = self.weights.price * price_score
+                    + self.weights.quantity * qty_score
+                    + self.weights.reliability * reliability
+                    + self.weights.freshness * freshness;
+
+                Some((i, total))
+            })
+            .collect();
+
+        // Sort by score descending (higher is better)
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Create ranked quotes
+        scored
+            .into_iter()
+            .enumerate()
+            .filter_map(|(rank, (idx, score))| {
+                quotes
+                    .get(idx)
+                    .map(|q| RankedQuote::new(q.clone(), rank + 1, score))
+            })
+            .collect()
+    }
+
+    fn name(&self) -> &'static str {
+        "WeightedMultiFactor"
+    }
+}
+
 /// Composite ranking strategy.
 ///
 /// Combines multiple ranking strategies with configurable weights.
@@ -825,5 +1065,181 @@ mod tests {
             .build();
 
         assert_eq!(strategy.strategies.len(), 3);
+    }
+
+    // WeightedMultiFactorStrategy tests
+
+    #[test]
+    fn ranking_weights_default() {
+        let weights = RankingWeights::default();
+        assert!((weights.price - 0.70).abs() < f64::EPSILON);
+        assert!((weights.quantity - 0.15).abs() < f64::EPSILON);
+        assert!((weights.reliability - 0.10).abs() < f64::EPSILON);
+        assert!((weights.freshness - 0.05).abs() < f64::EPSILON);
+        assert!((weights.sum() - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn ranking_weights_custom() {
+        let weights = RankingWeights::new(0.5, 0.2, 0.2, 0.1);
+        assert!((weights.price - 0.5).abs() < f64::EPSILON);
+        assert!((weights.sum() - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn weighted_multi_factor_default() {
+        let strategy = WeightedMultiFactorStrategy::new();
+        assert_eq!(strategy.name(), "WeightedMultiFactor");
+    }
+
+    #[test]
+    fn weighted_multi_factor_empty_quotes() {
+        let strategy = WeightedMultiFactorStrategy::new();
+        let ranked = strategy.rank(&[], OrderSide::Buy);
+        assert!(ranked.is_empty());
+    }
+
+    #[test]
+    fn weighted_multi_factor_price_dominant_buy() {
+        // Price has 70% weight, so best price should win
+        let strategy = WeightedMultiFactorStrategy::new();
+        let quotes = vec![
+            create_quote(100.0, 1.0, "venue-1"),
+            create_quote(95.0, 1.0, "venue-2"), // Best price for buy
+            create_quote(105.0, 1.0, "venue-3"),
+        ];
+
+        let ranked = strategy.rank(&quotes, OrderSide::Buy);
+
+        assert_eq!(ranked.len(), 3);
+        assert_eq!(ranked[0].rank, 1);
+        // Best price (95.0) should be ranked first
+        assert!((ranked[0].quote.price().get().to_f64().unwrap() - 95.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn weighted_multi_factor_price_dominant_sell() {
+        let strategy = WeightedMultiFactorStrategy::new();
+        let quotes = vec![
+            create_quote(100.0, 1.0, "venue-1"),
+            create_quote(95.0, 1.0, "venue-2"),
+            create_quote(105.0, 1.0, "venue-3"), // Best price for sell
+        ];
+
+        let ranked = strategy.rank(&quotes, OrderSide::Sell);
+
+        assert_eq!(ranked.len(), 3);
+        assert_eq!(ranked[0].rank, 1);
+        // Best price (105.0) should be ranked first
+        assert!((ranked[0].quote.price().get().to_f64().unwrap() - 105.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn weighted_multi_factor_with_reliability() {
+        let mut scores = std::collections::HashMap::new();
+        scores.insert("venue-1".to_string(), 1.0); // Perfect reliability
+        scores.insert("venue-2".to_string(), 0.5); // Medium reliability
+        scores.insert("venue-3".to_string(), 0.0); // Poor reliability
+
+        let strategy = WeightedMultiFactorStrategy::new().with_reliability_scores(scores);
+
+        // Same price, same quantity - reliability should differentiate
+        let quotes = vec![
+            create_quote(100.0, 1.0, "venue-1"),
+            create_quote(100.0, 1.0, "venue-2"),
+            create_quote(100.0, 1.0, "venue-3"),
+        ];
+
+        let ranked = strategy.rank(&quotes, OrderSide::Buy);
+
+        assert_eq!(ranked.len(), 3);
+        // venue-1 has best reliability
+        assert_eq!(ranked[0].quote.venue_id().as_str(), "venue-1");
+        assert_eq!(ranked[2].quote.venue_id().as_str(), "venue-3");
+    }
+
+    #[test]
+    fn weighted_multi_factor_with_requested_quantity() {
+        let strategy = WeightedMultiFactorStrategy::new().with_requested_quantity(10.0);
+
+        // Same price, different quantities
+        let quotes = vec![
+            create_quote(100.0, 10.0, "venue-1"), // Full fill
+            create_quote(100.0, 5.0, "venue-2"),  // Partial fill
+            create_quote(100.0, 2.0, "venue-3"),  // Small fill
+        ];
+
+        let ranked = strategy.rank(&quotes, OrderSide::Buy);
+
+        assert_eq!(ranked.len(), 3);
+        // venue-1 has full quantity
+        assert_eq!(ranked[0].quote.venue_id().as_str(), "venue-1");
+    }
+
+    #[test]
+    fn weighted_multi_factor_quantity_capped_at_one() {
+        let strategy = WeightedMultiFactorStrategy::new().with_requested_quantity(5.0);
+
+        // Quote offers more than requested
+        let quotes = vec![
+            create_quote(100.0, 10.0, "venue-1"), // Over-fill should cap at 1.0
+            create_quote(100.0, 5.0, "venue-2"),  // Exact fill
+        ];
+
+        let ranked = strategy.rank(&quotes, OrderSide::Buy);
+
+        // Both should have quantity score of 1.0, so scores should be similar
+        let score_diff = (ranked[0].score - ranked[1].score).abs();
+        assert!(score_diff < 0.01); // Very close scores
+    }
+
+    #[test]
+    fn compute_reliability_score_full_data() {
+        // 100% response rate, 0% reject rate
+        let score = WeightedMultiFactorStrategy::compute_reliability_score(Some(100.0), Some(0.0));
+        assert!((score - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn compute_reliability_score_poor_mm() {
+        // 50% response rate, 50% reject rate
+        let score = WeightedMultiFactorStrategy::compute_reliability_score(Some(50.0), Some(50.0));
+        assert!((score - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn compute_reliability_score_defaults() {
+        // No data - should use defaults (50% response, 0% reject)
+        let score = WeightedMultiFactorStrategy::compute_reliability_score(None, None);
+        assert!((score - 0.75).abs() < f64::EPSILON); // (0.5 + 1.0) / 2
+    }
+
+    #[test]
+    fn weighted_multi_factor_custom_weights() {
+        // Extreme weights: 100% price
+        let weights = RankingWeights::new(1.0, 0.0, 0.0, 0.0);
+        let strategy = WeightedMultiFactorStrategy::with_weights(weights);
+
+        let quotes = vec![
+            create_quote(100.0, 1.0, "venue-1"),
+            create_quote(95.0, 1.0, "venue-2"),
+        ];
+
+        let ranked = strategy.rank(&quotes, OrderSide::Buy);
+
+        // With 100% price weight, should behave like BestPriceStrategy
+        assert!((ranked[0].quote.price().get().to_f64().unwrap() - 95.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn weighted_multi_factor_add_reliability_score() {
+        let mut strategy = WeightedMultiFactorStrategy::new();
+        strategy.add_reliability_score("venue-1", 0.9);
+
+        let quotes = vec![create_quote(100.0, 1.0, "venue-1")];
+        let ranked = strategy.rank(&quotes, OrderSide::Buy);
+
+        assert_eq!(ranked.len(), 1);
+        // Should use the added reliability score
     }
 }
