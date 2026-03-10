@@ -86,6 +86,7 @@ pub use off_book_events::{
     CollateralLocked, CollateralReleased, ExecutionStep, OffBookExecutionStarted, OffBookFailed,
     OffBookSettled, TradeHash,
 };
+pub use reporting_events::{BlockTradeReported, ReportScheduled};
 pub use rfq_events::{
     ExecutionFailed, ExecutionStarted, QuoteCollectionCompleted, QuoteCollectionStarted,
     QuoteReceived, QuoteRequestFailed, QuoteRequested, QuoteSelected, RfqCancelled, RfqCreated,
@@ -94,4 +95,3 @@ pub use rfq_events::{
 pub use trade_events::{
     SettlementConfirmed, SettlementFailed, SettlementInitiated, TradeEvent, TradeExecuted,
 };
-pub use reporting_events::{BlockTradeReported, ReportScheduled};

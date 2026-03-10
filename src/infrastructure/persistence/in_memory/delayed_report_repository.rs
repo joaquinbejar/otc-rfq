@@ -10,16 +10,22 @@ use crate::infrastructure::persistence::traits::{
 };
 use async_trait::async_trait;
 use std::collections::HashMap;
-use std::sync::RwLock;
+use tokio::sync::RwLock;
 use uuid::Uuid;
 
 /// In-memory implementation of [`DelayedReportRepository`].
 ///
-/// Stores delayed reports in a `HashMap` protected by a `RwLock`.
+/// Stores delayed reports in a `HashMap` protected by a `tokio::sync::RwLock`.
 /// Suitable for testing and development; not for production use.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct InMemoryDelayedReportRepository {
     reports: RwLock<HashMap<Uuid, DelayedReport>>,
+}
+
+impl Default for InMemoryDelayedReportRepository {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl InMemoryDelayedReportRepository {
@@ -32,64 +38,41 @@ impl InMemoryDelayedReportRepository {
     }
 
     /// Returns the number of stored reports.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.reports.read().map(|r| r.len()).unwrap_or(0)
+    pub async fn len(&self) -> usize {
+        self.reports.read().await.len()
     }
 
     /// Returns whether the repository is empty.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
+    pub async fn is_empty(&self) -> bool {
+        self.len().await == 0
     }
 
     /// Clears all stored reports.
-    pub fn clear(&self) {
-        if let Ok(mut reports) = self.reports.write() {
-            reports.clear();
-        }
+    pub async fn clear(&self) {
+        self.reports.write().await.clear();
     }
 }
 
 #[async_trait]
 impl DelayedReportRepository for InMemoryDelayedReportRepository {
     async fn save(&self, report: &DelayedReport) -> RepositoryResult<()> {
-        let mut reports = self
-            .reports
-            .write()
-            .map_err(|_| RepositoryError::internal("Failed to acquire write lock"))?;
-
+        let mut reports = self.reports.write().await;
         reports.insert(report.id(), report.clone());
         Ok(())
     }
 
     async fn find_by_id(&self, id: &Uuid) -> RepositoryResult<Option<DelayedReport>> {
-        let reports = self
-            .reports
-            .read()
-            .map_err(|_| RepositoryError::internal("Failed to acquire read lock"))?;
-
+        let reports = self.reports.read().await;
         Ok(reports.get(id).cloned())
     }
 
     async fn find_by_trade_id(&self, trade_id: &str) -> RepositoryResult<Option<DelayedReport>> {
-        let reports = self
-            .reports
-            .read()
-            .map_err(|_| RepositoryError::internal("Failed to acquire read lock"))?;
-
-        Ok(reports
-            .values()
-            .find(|r| r.trade_id() == trade_id)
-            .cloned())
+        let reports = self.reports.read().await;
+        Ok(reports.values().find(|r| r.trade_id() == trade_id).cloned())
     }
 
     async fn find_pending(&self) -> RepositoryResult<Vec<DelayedReport>> {
-        let reports = self
-            .reports
-            .read()
-            .map_err(|_| RepositoryError::internal("Failed to acquire read lock"))?;
-
+        let reports = self.reports.read().await;
         Ok(reports
             .values()
             .filter(|r| !r.is_published())
@@ -98,11 +81,7 @@ impl DelayedReportRepository for InMemoryDelayedReportRepository {
     }
 
     async fn find_ready_to_publish(&self, now: Timestamp) -> RepositoryResult<Vec<DelayedReport>> {
-        let reports = self
-            .reports
-            .read()
-            .map_err(|_| RepositoryError::internal("Failed to acquire read lock"))?;
-
+        let reports = self.reports.read().await;
         Ok(reports
             .values()
             .filter(|r| !r.is_published() && r.publish_at() <= now)
@@ -111,43 +90,26 @@ impl DelayedReportRepository for InMemoryDelayedReportRepository {
     }
 
     async fn mark_published(&self, id: &Uuid, published_at: Timestamp) -> RepositoryResult<()> {
-        let mut reports = self
-            .reports
-            .write()
-            .map_err(|_| RepositoryError::internal("Failed to acquire write lock"))?;
-
+        let mut reports = self.reports.write().await;
         let report = reports
             .get_mut(id)
             .ok_or_else(|| RepositoryError::not_found("DelayedReport", id.to_string()))?;
-
         report.mark_published_at(published_at);
         Ok(())
     }
 
     async fn delete(&self, id: &Uuid) -> RepositoryResult<bool> {
-        let mut reports = self
-            .reports
-            .write()
-            .map_err(|_| RepositoryError::internal("Failed to acquire write lock"))?;
-
+        let mut reports = self.reports.write().await;
         Ok(reports.remove(id).is_some())
     }
 
     async fn count(&self) -> RepositoryResult<u64> {
-        let reports = self
-            .reports
-            .read()
-            .map_err(|_| RepositoryError::internal("Failed to acquire read lock"))?;
-
+        let reports = self.reports.read().await;
         Ok(reports.len() as u64)
     }
 
     async fn count_pending(&self) -> RepositoryResult<u64> {
-        let reports = self
-            .reports
-            .read()
-            .map_err(|_| RepositoryError::internal("Failed to acquire read lock"))?;
-
+        let reports = self.reports.read().await;
         Ok(reports.values().filter(|r| !r.is_published()).count() as u64)
     }
 }
@@ -163,7 +125,8 @@ mod tests {
 
     fn create_test_report(trade_id: &str, publish_secs_from_now: i64) -> DelayedReport {
         let symbol = Symbol::new("BTC/USD").unwrap();
-        let instrument = Instrument::new(symbol, AssetClass::CryptoSpot, SettlementMethod::default());
+        let instrument =
+            Instrument::new(symbol, AssetClass::CryptoSpot, SettlementMethod::default());
         let summary = TradeSummary::new(
             instrument,
             Price::new(50000.0).unwrap(),

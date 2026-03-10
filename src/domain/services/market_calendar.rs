@@ -74,10 +74,7 @@ pub fn next_market_close(from: Timestamp, config: &MarketCalendarConfig) -> Time
         .unwrap_or_else(|| NaiveTime::from_hms_opt(21, 0, 0).expect("valid time"));
 
     // Build today's close datetime
-    let today_close = datetime
-        .date_naive()
-        .and_time(close_time)
-        .and_utc();
+    let today_close = datetime.date_naive().and_time(close_time).and_utc();
 
     // If before today's close and today is a business day, use today
     if datetime < today_close && is_business_day(datetime.weekday()) {
@@ -119,9 +116,14 @@ fn is_business_day(weekday: Weekday) -> bool {
 ///
 /// # Returns
 ///
-/// Duration until the next market close, or None if already past.
+/// [`std::time::Duration`] until the next market close. Returns
+/// [`std::time::Duration::ZERO`] if the market close is not in the future
+/// (i.e., already past or exactly at `from`).
 #[must_use]
-pub fn delay_until_market_close(from: Timestamp, config: &MarketCalendarConfig) -> std::time::Duration {
+pub fn delay_until_market_close(
+    from: Timestamp,
+    config: &MarketCalendarConfig,
+) -> std::time::Duration {
     let close = next_market_close(from, config);
     let close_ms = close.timestamp_millis();
     let from_ms = from.timestamp_millis();

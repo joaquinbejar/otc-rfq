@@ -10,9 +10,9 @@ use crate::domain::entities::block_trade::BlockTrade;
 use crate::domain::entities::delayed_report::{DelayedReport, TradeSummary};
 use crate::domain::errors::DomainResult;
 use crate::domain::events::reporting_events::{BlockTradeReported, ReportScheduled};
-use crate::domain::services::market_calendar::{next_market_close, MarketCalendarConfig};
-use crate::domain::services::report_scheduler::ReportSchedulerConfig;
 use crate::domain::services::ReportingTier;
+use crate::domain::services::market_calendar::{MarketCalendarConfig, next_market_close};
+use crate::domain::services::report_scheduler::ReportSchedulerConfig;
 use crate::domain::value_objects::Timestamp;
 use crate::infrastructure::persistence::traits::DelayedReportRepository;
 use std::sync::Arc;
@@ -110,12 +110,7 @@ impl<R: DelayedReportRepository> ReportPublisher<R> {
             Timestamp::now(),
         );
 
-        let report = DelayedReport::new(
-            trade.id().to_string(),
-            tier,
-            summary,
-            publish_at,
-        );
+        let report = DelayedReport::new(trade.id().to_string(), tier, summary, publish_at);
 
         self.repository.save(&report).await.map_err(|e| {
             crate::domain::errors::DomainError::ValidationError(format!(
@@ -124,12 +119,7 @@ impl<R: DelayedReportRepository> ReportPublisher<R> {
             ))
         })?;
 
-        let event = ReportScheduled::new(
-            report.id(),
-            trade.id().to_string(),
-            tier,
-            publish_at,
-        );
+        let event = ReportScheduled::new(report.id(), trade.id().to_string(), tier, publish_at);
 
         info!(
             trade_id = %trade.id(),
@@ -171,21 +161,26 @@ impl<R: DelayedReportRepository> ReportPublisher<R> {
     /// Returns an error if reports cannot be retrieved from the repository.
     pub async fn process_ready(&self) -> DomainResult<PublishResult> {
         let now = Timestamp::now();
-        let ready_reports = self.repository.find_ready_to_publish(now).await.map_err(|e| {
-            crate::domain::errors::DomainError::ValidationError(format!(
-                "Failed to find ready reports: {}",
-                e
-            ))
-        })?;
+        let ready_reports = self
+            .repository
+            .find_ready_to_publish(now)
+            .await
+            .map_err(|e| {
+                crate::domain::errors::DomainError::ValidationError(format!(
+                    "Failed to find ready reports: {}",
+                    e
+                ))
+            })?;
 
         if ready_reports.is_empty() {
             debug!("No reports ready for publication");
             return Ok(PublishResult::empty());
         }
 
-        info!(count = ready_reports.len(), "Processing ready reports");
+        let total_ready = ready_reports.len();
+        info!(count = total_ready, "Processing ready reports");
 
-        let mut events = Vec::with_capacity(ready_reports.len());
+        let mut events = Vec::with_capacity(total_ready);
         let mut published_count = 0;
 
         for report in ready_reports {
@@ -206,7 +201,7 @@ impl<R: DelayedReportRepository> ReportPublisher<R> {
 
         info!(
             published = published_count,
-            failed = events.len() - published_count,
+            failed = total_ready.saturating_sub(published_count),
             "Completed report processing"
         );
 
@@ -320,7 +315,11 @@ impl<R: DelayedReportRepository> ReportPublisher<R> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::clone_on_ref_ptr, clippy::indexing_slicing)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::clone_on_ref_ptr,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
     use crate::domain::value_objects::enums::{AssetClass, SettlementMethod};

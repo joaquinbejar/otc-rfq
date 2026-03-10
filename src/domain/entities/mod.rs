@@ -39,6 +39,7 @@ pub use counterparty::{
     Counterparty, CounterpartyLimits, CounterpartyType, InvalidCounterpartyTypeError,
     InvalidKycStatusError, KycStatus, WalletAddress,
 };
+pub use delayed_report::{DelayedReport, TradeSummary};
 pub use mm_performance::{
     DEFAULT_MIN_RESPONSE_RATE_PCT, DEFAULT_WINDOW_DAYS, MmPerformanceEvent, MmPerformanceEventKind,
     MmPerformanceMetrics,
@@ -48,4 +49,3 @@ pub use quote::{Quote, QuoteBuilder, QuoteMetadata};
 pub use rfq::{ComplianceResult, Rfq, RfqBuilder};
 pub use trade::{InvalidSettlementStateError, SettlementState, Trade};
 pub use venue::{InvalidVenueHealthError, Venue, VenueConfig, VenueHealth, VenueMetrics};
-pub use delayed_report::{DelayedReport, TradeSummary};

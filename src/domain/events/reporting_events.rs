@@ -205,7 +205,8 @@ mod tests {
 
     fn create_test_summary() -> TradeSummary {
         let symbol = Symbol::new("BTC/USD").unwrap();
-        let instrument = Instrument::new(symbol, AssetClass::CryptoSpot, SettlementMethod::default());
+        let instrument =
+            Instrument::new(symbol, AssetClass::CryptoSpot, SettlementMethod::default());
         TradeSummary::new(
             instrument,
             Price::new(50000.0).unwrap(),

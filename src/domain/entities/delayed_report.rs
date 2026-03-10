@@ -31,7 +31,12 @@ pub struct TradeSummary {
 impl TradeSummary {
     /// Creates a new trade summary.
     #[must_use]
-    pub fn new(instrument: Instrument, price: Price, quantity: Quantity, executed_at: Timestamp) -> Self {
+    pub fn new(
+        instrument: Instrument,
+        price: Price,
+        quantity: Quantity,
+        executed_at: Timestamp,
+    ) -> Self {
         Self {
             instrument,
             price,
@@ -251,12 +256,13 @@ impl std::fmt::Display for DelayedReport {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::domain::value_objects::enums::{AssetClass, SettlementMethod};
     use crate::domain::value_objects::Symbol;
+    use crate::domain::value_objects::enums::{AssetClass, SettlementMethod};
 
     fn create_test_summary() -> TradeSummary {
         let symbol = Symbol::new("BTC/USD").unwrap();
-        let instrument = Instrument::new(symbol, AssetClass::CryptoSpot, SettlementMethod::default());
+        let instrument =
+            Instrument::new(symbol, AssetClass::CryptoSpot, SettlementMethod::default());
         TradeSummary::new(
             instrument,
             Price::new(50000.0).unwrap(),
