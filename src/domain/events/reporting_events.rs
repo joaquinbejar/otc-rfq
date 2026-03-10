@@ -89,9 +89,11 @@ impl BlockTradeReported {
     }
 
     /// Returns the actual delay from scheduling to publication.
+    ///
+    /// Returns the delay with millisecond precision for accurate audit trails.
     #[must_use]
-    pub fn actual_delay_secs(&self) -> i64 {
-        self.published_at.timestamp_millis() / 1000 - self.scheduled_at.timestamp_millis() / 1000
+    pub fn actual_delay(&self) -> std::time::Duration {
+        self.scheduled_at.duration_until(&self.published_at)
     }
 }
 
@@ -266,7 +268,7 @@ mod tests {
             published_at,
         );
 
-        let delay = event.actual_delay_secs();
-        assert!(delay >= 899 && delay <= 901);
+        let delay = event.actual_delay();
+        assert!(delay.as_secs() >= 899 && delay.as_secs() <= 901);
     }
 }

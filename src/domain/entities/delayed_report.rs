@@ -228,13 +228,8 @@ impl DelayedReport {
             return None;
         }
 
-        // Calculate difference in milliseconds
-        let remaining_ms = self.publish_at.timestamp_millis() - now.timestamp_millis();
-        if remaining_ms <= 0 {
-            None
-        } else {
-            Some(std::time::Duration::from_millis(remaining_ms as u64))
-        }
+        // Use native Duration calculation to avoid overflow
+        Some(now.duration_until(&self.publish_at))
     }
 }
 
