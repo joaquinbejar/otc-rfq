@@ -25,10 +25,12 @@ pub mod mm_performance;
 pub mod off_book_executor;
 pub mod position_service;
 pub mod quote_lock;
+// pub mod quote_aggregator; // TODO: Module not yet implemented
 pub mod report_publisher;
 pub mod report_scheduler;
 pub mod risk_check;
 pub mod settlement;
+pub mod theoretical_pricer;
 
 pub use crate::domain::events::conflict_events::{ConflictType, Resolution};
 pub use acceptance_flow::{
@@ -58,3 +60,4 @@ pub use position_service::{Position, PositionUpdateService};
 pub use report_publisher::{PublishResult, ReportPublisher};
 pub use report_scheduler::{ReportScheduler, ReportSchedulerConfig, ScheduledReport};
 pub use settlement::{Fees, SettlementResult, SettlementService};
+pub use theoretical_pricer::TheoreticalPricer;
