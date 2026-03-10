@@ -58,9 +58,7 @@ pub use market_calendar::{
 };
 pub use off_book_executor::{ExecutedBlockTrade, OffBookExecutor, OffBookExecutorConfig};
 pub use position_service::{Position, PositionUpdateService};
-pub use price_discovery_service::{
-    LiquidityMetrics, PriceDiscoveryConfig, PriceDiscoveryService,
-};
+pub use price_discovery_service::{LiquidityMetrics, PriceDiscoveryConfig, PriceDiscoveryService};
 pub use report_publisher::{PublishResult, ReportPublisher};
 pub use report_scheduler::{ReportScheduler, ReportSchedulerConfig, ScheduledReport};
 pub use settlement::{Fees, SettlementResult, SettlementService};

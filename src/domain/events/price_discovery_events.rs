@@ -340,14 +340,10 @@ mod tests {
         let rfq_id = RfqId::new(Uuid::new_v4());
         let instrument = create_test_instrument();
         let price = Price::new(50000.0).unwrap();
-        let theo_price = TheoreticalPrice::new(
-            price,
-            0.25,
-            PriceDiscoveryMethod::Theoretical,
-            0.8,
-        );
+        let theo_price = TheoreticalPrice::new(price, 0.25, PriceDiscoveryMethod::Theoretical, 0.8);
 
-        let event = TheoreticalPriceComputed::new(rfq_id, instrument.clone(), theo_price.clone(), 5);
+        let event =
+            TheoreticalPriceComputed::new(rfq_id, instrument.clone(), theo_price.clone(), 5);
 
         assert_eq!(event.rfq_id_value(), rfq_id);
         assert_eq!(event.instrument(), &instrument);

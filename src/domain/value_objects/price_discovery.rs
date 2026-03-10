@@ -156,12 +156,7 @@ mod tests {
     #[test]
     fn theoretical_price_creation() {
         let price = Price::new(100.0).unwrap();
-        let theo = TheoreticalPrice::new(
-            price,
-            0.25,
-            PriceDiscoveryMethod::Theoretical,
-            0.8,
-        );
+        let theo = TheoreticalPrice::new(price, 0.25, PriceDiscoveryMethod::Theoretical, 0.8);
 
         assert_eq!(theo.price(), price);
         assert_eq!(theo.implied_volatility(), 0.25);
@@ -173,54 +168,30 @@ mod tests {
     #[test]
     fn theoretical_price_clamps_confidence() {
         let price = Price::new(100.0).unwrap();
-        
-        let theo_high = TheoreticalPrice::new(
-            price,
-            0.25,
-            PriceDiscoveryMethod::Theoretical,
-            1.5,
-        );
+
+        let theo_high = TheoreticalPrice::new(price, 0.25, PriceDiscoveryMethod::Theoretical, 1.5);
         assert_eq!(theo_high.confidence(), 1.0);
 
-        let theo_low = TheoreticalPrice::new(
-            price,
-            0.25,
-            PriceDiscoveryMethod::Theoretical,
-            -0.5,
-        );
+        let theo_low = TheoreticalPrice::new(price, 0.25, PriceDiscoveryMethod::Theoretical, -0.5);
         assert_eq!(theo_low.confidence(), 0.0);
     }
 
     #[test]
     fn theoretical_price_clamps_iv() {
         let price = Price::new(100.0).unwrap();
-        let theo = TheoreticalPrice::new(
-            price,
-            -0.1,
-            PriceDiscoveryMethod::Theoretical,
-            0.8,
-        );
+        let theo = TheoreticalPrice::new(price, -0.1, PriceDiscoveryMethod::Theoretical, 0.8);
         assert_eq!(theo.implied_volatility(), 0.0);
     }
 
     #[test]
     fn theoretical_price_reliability() {
         let price = Price::new(100.0).unwrap();
-        
-        let reliable = TheoreticalPrice::new(
-            price,
-            0.25,
-            PriceDiscoveryMethod::Theoretical,
-            0.5,
-        );
+
+        let reliable = TheoreticalPrice::new(price, 0.25, PriceDiscoveryMethod::Theoretical, 0.5);
         assert!(reliable.is_reliable());
 
-        let unreliable = TheoreticalPrice::new(
-            price,
-            0.25,
-            PriceDiscoveryMethod::Theoretical,
-            0.49,
-        );
+        let unreliable =
+            TheoreticalPrice::new(price, 0.25, PriceDiscoveryMethod::Theoretical, 0.49);
         assert!(!unreliable.is_reliable());
     }
 }

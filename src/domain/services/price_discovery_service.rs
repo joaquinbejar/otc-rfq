@@ -216,12 +216,10 @@ impl PriceDiscoveryService {
         let bid_value = base_value - half_spread;
         let ask_value = base_value + half_spread;
 
-        let bid = Price::new(bid_value.max(0.0)).map_err(|e| {
-            DomainError::ValidationError(format!("Invalid bid price: {}", e))
-        })?;
-        let ask = Price::new(ask_value).map_err(|e| {
-            DomainError::ValidationError(format!("Invalid ask price: {}", e))
-        })?;
+        let bid = Price::new(bid_value.max(0.0))
+            .map_err(|e| DomainError::ValidationError(format!("Invalid bid price: {}", e)))?;
+        let ask = Price::new(ask_value)
+            .map_err(|e| DomainError::ValidationError(format!("Invalid ask price: {}", e)))?;
 
         Ok((bid, ask))
     }
@@ -256,7 +254,7 @@ mod tests {
         let service = PriceDiscoveryService::default();
         let rfq_id = RfqId::new(Uuid::new_v4());
         let instrument = create_test_instrument();
-        
+
         let metrics = LiquidityMetrics::new(
             15_000.0, // Good depth
             0.01,     // 1% spread
@@ -276,7 +274,7 @@ mod tests {
         let service = PriceDiscoveryService::default();
         let rfq_id = RfqId::new(Uuid::new_v4());
         let instrument = create_test_instrument();
-        
+
         let metrics = LiquidityMetrics::new(
             1_000.0, // Low depth
             0.05,    // Wide spread
@@ -294,7 +292,7 @@ mod tests {
         let service = PriceDiscoveryService::default();
         let rfq_id = RfqId::new(Uuid::new_v4());
         let instrument = create_test_instrument();
-        
+
         let metrics = LiquidityMetrics::new(
             1_000.0, // Low depth
             0.05,    // Wide spread
@@ -312,7 +310,7 @@ mod tests {
         let service = PriceDiscoveryService::default();
         let rfq_id = RfqId::new(Uuid::new_v4());
         let instrument = create_test_instrument();
-        
+
         let metrics = LiquidityMetrics::new(
             0.0, // No depth
             1.0, // Very wide spread
@@ -331,7 +329,7 @@ mod tests {
         let service = PriceDiscoveryService::default();
         let rfq_id = RfqId::new(Uuid::new_v4());
         let instrument = create_test_instrument();
-        
+
         let underlying = Price::new(100.0).unwrap();
         let strike = Price::new(105.0).unwrap();
         let nearby_ivs = vec![
@@ -367,7 +365,7 @@ mod tests {
         let bid_f64 = bid.get().to_f64().unwrap();
         let ask_f64 = ask.get().to_f64().unwrap();
         let spread = ask_f64 - bid_f64;
-        
+
         assert!(spread < 5.0); // Less than 5% spread
         assert!(bid_f64 < 100.0);
         assert!(ask_f64 > 100.0);
@@ -384,7 +382,7 @@ mod tests {
         let bid_f64 = bid.get().to_f64().unwrap();
         let ask_f64 = ask.get().to_f64().unwrap();
         let spread = ask_f64 - bid_f64;
-        
+
         assert!(spread > 10.0); // More than 10% spread
         assert!(bid_f64 < 100.0);
         assert!(ask_f64 > 100.0);
@@ -393,7 +391,7 @@ mod tests {
     #[test]
     fn liquidity_metrics_is_liquid() {
         let config = PriceDiscoveryConfig::default();
-        
+
         let liquid = LiquidityMetrics::new(15_000.0, 0.01, 10_000.0, 5);
         assert!(liquid.is_liquid(&config));
 

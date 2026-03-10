@@ -186,8 +186,8 @@ impl TheoreticalPricer {
             });
         }
 
-        let d1 = ((spot / strike).ln() + (rate + 0.5 * volatility * volatility) * time)
-            / vol_sqrt_time;
+        let d1 =
+            ((spot / strike).ln() + (rate + 0.5 * volatility * volatility) * time) / vol_sqrt_time;
         let d2 = d1 - vol_sqrt_time;
 
         let price = if is_call {
@@ -345,8 +345,7 @@ mod tests {
     #[test]
     fn black_scholes_call_atm() {
         // ATM call: spot = strike = 100, 1 year, 5% rate, 20% vol
-        let price = TheoreticalPricer::black_scholes(100.0, 100.0, 1.0, 0.05, 0.20, true)
-            .unwrap();
+        let price = TheoreticalPricer::black_scholes(100.0, 100.0, 1.0, 0.05, 0.20, true).unwrap();
 
         // ATM call should be roughly 8-10 for these parameters
         assert!(price > 7.0 && price < 11.0);
@@ -355,8 +354,7 @@ mod tests {
     #[test]
     fn black_scholes_put_atm() {
         // ATM put: spot = strike = 100, 1 year, 5% rate, 20% vol
-        let price = TheoreticalPricer::black_scholes(100.0, 100.0, 1.0, 0.05, 0.20, false)
-            .unwrap();
+        let price = TheoreticalPricer::black_scholes(100.0, 100.0, 1.0, 0.05, 0.20, false).unwrap();
 
         // ATM put should be similar to call but slightly less due to drift
         assert!(price > 5.0 && price < 9.0);
@@ -365,8 +363,7 @@ mod tests {
     #[test]
     fn black_scholes_deep_itm_call() {
         // Deep ITM call: spot = 120, strike = 100
-        let price = TheoreticalPricer::black_scholes(120.0, 100.0, 1.0, 0.05, 0.20, true)
-            .unwrap();
+        let price = TheoreticalPricer::black_scholes(120.0, 100.0, 1.0, 0.05, 0.20, true).unwrap();
 
         // Should be at least intrinsic value (20)
         assert!(price >= 20.0);
@@ -375,8 +372,7 @@ mod tests {
     #[test]
     fn black_scholes_deep_otm_call() {
         // Deep OTM call: spot = 80, strike = 100
-        let price = TheoreticalPricer::black_scholes(80.0, 100.0, 1.0, 0.05, 0.20, true)
-            .unwrap();
+        let price = TheoreticalPricer::black_scholes(80.0, 100.0, 1.0, 0.05, 0.20, true).unwrap();
 
         // Should be small but positive
         assert!(price > 0.0 && price < 5.0);
@@ -385,7 +381,7 @@ mod tests {
     #[test]
     fn compute_full_theoretical_price() {
         let pricer = TheoreticalPricer::new();
-        
+
         let underlying = Price::new(100.0).unwrap();
         let strike = Price::new(105.0).unwrap();
         let nearby_ivs = vec![
@@ -406,7 +402,7 @@ mod tests {
     #[test]
     fn compute_requires_positive_time() {
         let pricer = TheoreticalPricer::new();
-        
+
         let underlying = Price::new(100.0).unwrap();
         let strike = Price::new(100.0).unwrap();
         let nearby_ivs = vec![(Price::new(100.0).unwrap(), 0.20)];
@@ -418,7 +414,7 @@ mod tests {
     #[test]
     fn compute_requires_sufficient_ivs() {
         let pricer = TheoreticalPricer::new();
-        
+
         let underlying = Price::new(100.0).unwrap();
         let strike = Price::new(100.0).unwrap();
         let nearby_ivs = vec![(Price::new(100.0).unwrap(), 0.20)];
