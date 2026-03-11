@@ -52,6 +52,7 @@
 
 pub mod acceptance_events;
 pub mod allocation_events;
+pub mod atomic_execution_events;
 pub mod block_trade_events;
 pub mod compliance_events;
 pub mod conflict_events;
@@ -69,6 +70,10 @@ pub use acceptance_events::{
 };
 pub use allocation_events::{
     AllocationEvent, AllocationExecuted, AllocationRolledBack, MultiMmFillAllocated,
+};
+pub use atomic_execution_events::{
+    AtomicExecutionEvent, ExecutionCommitted, ExecutionRolledBack, LockAcquisitionFailed,
+    LocksAcquired,
 };
 pub use block_trade_events::{
     BlockTradeApproved, BlockTradeConfirmed, BlockTradeExecuted, BlockTradeFailed,
