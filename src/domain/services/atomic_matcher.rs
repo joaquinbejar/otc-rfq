@@ -20,8 +20,8 @@
 //! # Example
 //!
 //! ```ignore
-//! let matcher = AtomicMatcher::new(lock_manager);
-//! let result = matcher.execute_atomic(
+//! let matcher = AtomicMatcher::new(lock_manager, config);
+//! let result = matcher.execute_trade(
 //!     &rfq,
 //!     &quote,
 //!     || async { venue.execute_trade(&quote).await },

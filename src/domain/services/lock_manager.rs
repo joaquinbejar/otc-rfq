@@ -197,6 +197,14 @@ impl LockGuard {
 }
 
 impl Drop for LockGuard {
+    /// Releases locks on drop if not already released.
+    ///
+    /// # Note
+    ///
+    /// If dropped outside a Tokio runtime context, the locks will not be released
+    /// automatically. In practice, `LockGuard` is always used within async contexts
+    /// (via `AtomicMatcher`), so this should not occur. If using `LockGuard` directly,
+    /// always call `release()` explicitly before dropping.
     fn drop(&mut self) {
         if !self.released {
             // Spawn a task to release locks asynchronously when a Tokio runtime is available
@@ -210,6 +218,8 @@ impl Drop for LockGuard {
                     let _ = lock_manager.release_all(&locks, holder_id).await;
                 });
             }
+            // Note: If no runtime is available, locks will leak. This is acceptable
+            // since LockGuard is designed for use in async contexts only.
         }
     }
 }
