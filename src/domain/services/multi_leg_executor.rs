@@ -318,6 +318,23 @@ impl<E: LegExecutor> MultiLegExecutor<E> {
         &self,
         package_quote: &PackageQuote,
     ) -> DomainResult<MultiLegExecutionResult> {
+        let overall_timeout = self.config.overall_timeout;
+
+        match tokio::time::timeout(overall_timeout, self.execute_inner(package_quote)).await {
+            Ok(result) => result,
+            Err(_) => Err(DomainError::LegExecutionTimeout {
+                leg_index: 0,
+                instrument: "overall execution".to_string(),
+                timeout_ms: self.config.overall_timeout.as_millis() as u64,
+            }),
+        }
+    }
+
+    /// Inner execution logic wrapped by overall timeout.
+    async fn execute_inner(
+        &self,
+        package_quote: &PackageQuote,
+    ) -> DomainResult<MultiLegExecutionResult> {
         let execution_id = MultiLegExecutionId::generate();
         let started_at = Timestamp::now();
         let leg_prices = package_quote.leg_prices();
@@ -435,7 +452,7 @@ impl<E: LegExecutor> MultiLegExecutor<E> {
         );
         events.push(rollback_start.into());
 
-        match self.rollback_all(executed_legs).await {
+        match self.rollback_all(executed_legs, &failure_reason).await {
             Ok(rolled_back_count) => {
                 let rollback_complete =
                     MultiLegRollbackCompleted::new(execution_id.clone(), rolled_back_count);
@@ -449,11 +466,20 @@ impl<E: LegExecutor> MultiLegExecutor<E> {
                 })
             }
             Err(rollback_error) => {
+                // Extract partially_rolled_back from the RollbackFailed error
+                let partially_rolled_back = match &rollback_error {
+                    DomainError::RollbackFailed {
+                        partially_rolled_back,
+                        ..
+                    } => *partially_rolled_back,
+                    _ => 0,
+                };
+
                 let partial_failure = MultiLegPartialFailure::new(
                     execution_id,
                     executed_legs.len(),
-                    0,
-                    executed_legs.len(),
+                    partially_rolled_back,
+                    executed_legs.len() - partially_rolled_back,
                     failure_reason.clone(),
                     rollback_error.to_string(),
                 );
@@ -462,7 +488,7 @@ impl<E: LegExecutor> MultiLegExecutor<E> {
                 Err(DomainError::RollbackFailed {
                     original_failure: failure_reason,
                     rollback_failure: rollback_error.to_string(),
-                    partially_rolled_back: 0,
+                    partially_rolled_back,
                 })
             }
         }
@@ -471,7 +497,11 @@ impl<E: LegExecutor> MultiLegExecutor<E> {
     /// Rolls back all executed legs using compensating trades.
     ///
     /// Legs are rolled back in reverse order (LIFO).
-    async fn rollback_all(&self, executed_legs: &[LegExecutionResult]) -> DomainResult<usize> {
+    async fn rollback_all(
+        &self,
+        executed_legs: &[LegExecutionResult],
+        original_failure: &str,
+    ) -> DomainResult<usize> {
         let compensating_trades = self.compensator.generate_all(executed_legs);
         let mut rolled_back = 0;
 
@@ -495,7 +525,7 @@ impl<E: LegExecutor> MultiLegExecutor<E> {
 
             if let Some(e) = last_error {
                 return Err(DomainError::RollbackFailed {
-                    original_failure: "leg execution failed".to_string(),
+                    original_failure: original_failure.to_string(),
                     rollback_failure: e.to_string(),
                     partially_rolled_back: rolled_back,
                 });
