@@ -105,11 +105,15 @@ impl PackageRankingStrategy for BestNetPriceStrategy {
         let mut scored: Vec<(usize, f64)> = quotes
             .iter()
             .enumerate()
-            .map(|(i, q)| {
-                let net_price = q.net_price().to_f64().unwrap_or(0.0);
-                // Negate so that lower net prices (less cost or more credit) get higher scores
-                let score = -net_price;
-                (i, score)
+            .filter_map(|(i, q)| {
+                // Filter out quotes where net_price fails to convert to f64
+                // (e.g., extreme Decimal values). This prevents silent 0.0 scores
+                // that would incorrectly rank as best.
+                q.net_price().to_f64().map(|net_price| {
+                    // Negate so that lower net prices (less cost or more credit) get higher scores
+                    let score = -net_price;
+                    (i, score)
+                })
             })
             .collect();
 
@@ -206,22 +210,25 @@ impl PackageRankingStrategy for WeightedPackageStrategy {
         let mut scored: Vec<(usize, f64)> = quotes
             .iter()
             .enumerate()
-            .map(|(i, q)| {
-                let net_price = q.net_price().to_f64().unwrap_or(0.0);
+            .filter_map(|(i, q)| {
+                // Filter out quotes where net_price fails to convert to f64
+                // (e.g., extreme Decimal values). This prevents silent 0.0 scores
+                // that would incorrectly rank as best.
+                q.net_price().to_f64().map(|net_price| {
+                    // Normalize price score - lower net_price is better for both sides
+                    // (less cost for debit, more credit for credit strategies)
+                    let price_score = -net_price;
 
-                // Normalize price score - lower net_price is better for both sides
-                // (less cost for debit, more credit for credit strategies)
-                let price_score = -net_price;
+                    // For now, assume all venues have equal reliability (1.0)
+                    // In a full implementation, this would come from venue metrics
+                    let reliability_score = 1.0;
 
-                // For now, assume all venues have equal reliability (1.0)
-                // In a full implementation, this would come from venue metrics
-                let reliability_score = 1.0;
+                    let weighted_score = (self.price_weight * price_score
+                        + self.reliability_weight * reliability_score)
+                        / total_weight;
 
-                let weighted_score = (self.price_weight * price_score
-                    + self.reliability_weight * reliability_score)
-                    / total_weight;
-
-                (i, weighted_score)
+                    (i, weighted_score)
+                })
             })
             .collect();
 
