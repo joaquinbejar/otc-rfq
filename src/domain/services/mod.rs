@@ -34,6 +34,7 @@ pub mod package_quote_validator;
 pub mod position_service;
 pub mod price_discovery_service;
 pub mod quote_lock;
+pub mod quote_normalizer;
 pub mod resource_lock;
 // pub mod quote_aggregator; // TODO: Module not yet implemented
 pub mod report_publisher;
@@ -81,4 +82,5 @@ pub use multi_leg_executor::{
     MultiLegExecutorConfig,
 };
 pub use package_quote_validator::{DEFAULT_TOLERANCE_BPS, PackageQuoteValidator};
+pub use quote_normalizer::QuoteNormalizer;
 pub use resource_lock::{ResourceLock, sort_locks};
