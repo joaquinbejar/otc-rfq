@@ -52,6 +52,7 @@
 
 pub mod acceptance_events;
 pub mod allocation_events;
+pub mod anonymity_events;
 pub mod atomic_execution_events;
 pub mod block_trade_events;
 pub mod compliance_events;
@@ -111,3 +112,5 @@ pub use rfq_events::{
 pub use trade_events::{
     SettlementConfirmed, SettlementFailed, SettlementInitiated, TradeEvent, TradeExecuted,
 };
+
+pub use anonymity_events::{AnonymousRfqBroadcast, IdentityRevealed};

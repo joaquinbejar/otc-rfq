@@ -271,6 +271,7 @@ struct RfqRow {
     side: String,
     quantity: rust_decimal::Decimal,
     min_quantity: Option<rust_decimal::Decimal>,
+    anonymity_level: Option<String>,
     state: String,
     expires_at: i64,
     quotes: serde_json::Value,
@@ -286,6 +287,7 @@ impl RfqRow {
     /// Converts the row into an RFQ entity.
     fn try_into_rfq(self) -> RepositoryResult<Rfq> {
         use crate::domain::entities::ComplianceResult;
+        use crate::domain::entities::anonymity::AnonymityLevel;
         use crate::domain::entities::quote::Quote;
         use crate::domain::value_objects::enums::OrderSide;
         use crate::domain::value_objects::timestamp::Timestamp;
@@ -307,6 +309,13 @@ impl RfqRow {
             .map(Quantity::from_decimal)
             .transpose()
             .map_err(|e| RepositoryError::serialization(e.to_string()))?;
+        let anonymity_level: AnonymityLevel = self
+            .anonymity_level
+            .as_deref()
+            .map(|s| serde_json::from_str(&format!("\"{}\"", s)))
+            .transpose()
+            .map_err(|e| RepositoryError::serialization(e.to_string()))?
+            .unwrap_or_default();
         let state: RfqState = serde_json::from_str(&format!("\"{}\"", self.state))
             .map_err(|e| RepositoryError::serialization(e.to_string()))?;
         let expires_at = Timestamp::from_millis(self.expires_at).ok_or_else(|| {
@@ -338,6 +347,7 @@ impl RfqRow {
             side,
             quantity,
             min_quantity,
+            anonymity_level,
             state,
             expires_at,
             quotes,

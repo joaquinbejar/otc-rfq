@@ -5,6 +5,7 @@
 //! These DTOs decouple the API layer from the domain layer, providing
 //! validation and serialization for RFQ-related requests and responses.
 
+use crate::domain::entities::anonymity::AnonymityLevel;
 use crate::domain::value_objects::enums::{AssetClass, SettlementMethod};
 use crate::domain::value_objects::symbol::Symbol;
 use crate::domain::value_objects::timestamp::Timestamp;
@@ -27,6 +28,10 @@ pub struct CreateRfqRequest {
     pub quantity: f64,
     /// Expiry duration in seconds from now.
     pub expiry_seconds: u64,
+    /// Whether this RFQ should be anonymous.
+    /// If true, the requester's identity is hidden from market makers.
+    #[serde(default)]
+    pub anonymous: bool,
 }
 
 impl CreateRfqRequest {
@@ -47,6 +52,38 @@ impl CreateRfqRequest {
             side,
             quantity,
             expiry_seconds,
+            anonymous: false,
+        }
+    }
+
+    /// Creates a new anonymous CreateRfqRequest.
+    #[must_use]
+    pub fn new_anonymous(
+        client_id: impl Into<String>,
+        base_asset: impl Into<String>,
+        quote_asset: impl Into<String>,
+        side: OrderSide,
+        quantity: f64,
+        expiry_seconds: u64,
+    ) -> Self {
+        Self {
+            client_id: client_id.into(),
+            base_asset: base_asset.into(),
+            quote_asset: quote_asset.into(),
+            side,
+            quantity,
+            expiry_seconds,
+            anonymous: true,
+        }
+    }
+
+    /// Returns the anonymity level for this request.
+    #[must_use]
+    pub fn anonymity_level(&self) -> AnonymityLevel {
+        if self.anonymous {
+            AnonymityLevel::FullAnonymous
+        } else {
+            AnonymityLevel::Transparent
         }
     }
 

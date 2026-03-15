@@ -12,7 +12,7 @@
 
 use crate::application::dto::rfq_dto::{CreateRfqRequest, CreateRfqResponse};
 use crate::application::error::{ApplicationError, ApplicationResult};
-use crate::domain::entities::rfq::{ComplianceResult, Rfq};
+use crate::domain::entities::rfq::{ComplianceResult, Rfq, RfqBuilder};
 use crate::domain::events::rfq_events::RfqCreated;
 use crate::domain::value_objects::{CounterpartyId, RfqId};
 use async_trait::async_trait;
@@ -193,8 +193,10 @@ impl CreateRfqUseCase {
             ));
         }
 
-        // 7. Create RFQ aggregate
-        let rfq = Rfq::new(client_id, instrument, request.side, quantity, expires_at)?;
+        // 7. Create RFQ aggregate with anonymity level
+        let rfq = RfqBuilder::new(client_id, instrument, request.side, quantity, expires_at)
+            .anonymity_level(request.anonymity_level())
+            .build();
 
         // 8. Persist RFQ
         self.rfq_repository

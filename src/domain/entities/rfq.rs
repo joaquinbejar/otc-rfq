@@ -39,6 +39,7 @@
 //! assert!(rfq.is_active());
 //! ```
 
+use crate::domain::entities::anonymity::{AnonymityLevel, AnonymousRfqView};
 use crate::domain::entities::quote::Quote;
 use crate::domain::errors::{DomainError, DomainResult};
 use crate::domain::value_objects::timestamp::Timestamp;
@@ -133,6 +134,8 @@ pub struct Rfq {
     quantity: Quantity,
     /// Optional minimum acceptable quantity for partial fills.
     min_quantity: Option<Quantity>,
+    /// Anonymity level for this RFQ.
+    anonymity_level: AnonymityLevel,
     /// Current state in the lifecycle.
     state: RfqState,
     /// When this RFQ expires.
@@ -186,6 +189,7 @@ impl Rfq {
             side,
             quantity,
             min_quantity: None,
+            anonymity_level: AnonymityLevel::default(),
             state: RfqState::Created,
             expires_at,
             quotes: Vec::new(),
@@ -213,6 +217,7 @@ impl Rfq {
         side: OrderSide,
         quantity: Quantity,
         min_quantity: Option<Quantity>,
+        anonymity_level: AnonymityLevel,
         state: RfqState,
         expires_at: Timestamp,
         quotes: Vec<Quote>,
@@ -230,6 +235,7 @@ impl Rfq {
             side,
             quantity,
             min_quantity,
+            anonymity_level,
             state,
             expires_at,
             quotes,
@@ -327,6 +333,36 @@ impl Rfq {
     #[must_use]
     pub fn min_quantity(&self) -> Option<Quantity> {
         self.min_quantity
+    }
+
+    /// Returns the anonymity level.
+    #[inline]
+    #[must_use]
+    pub fn anonymity_level(&self) -> AnonymityLevel {
+        self.anonymity_level
+    }
+
+    /// Returns true if this RFQ is anonymous.
+    #[inline]
+    #[must_use]
+    pub fn is_anonymous(&self) -> bool {
+        self.anonymity_level.is_anonymous()
+    }
+
+    /// Creates an anonymized view of this RFQ for broadcasting to market makers.
+    ///
+    /// The view contains only the information needed for quoting,
+    /// without revealing the requester's identity.
+    #[must_use]
+    pub fn to_anonymous_view(&self) -> AnonymousRfqView {
+        AnonymousRfqView::new(
+            self.id,
+            self.instrument.clone(),
+            self.side,
+            self.quantity,
+            self.expires_at,
+            self.anonymity_level,
+        )
     }
 
     /// Returns the current state.
@@ -655,6 +691,7 @@ pub struct RfqBuilder {
     side: OrderSide,
     quantity: Quantity,
     min_quantity: Option<Quantity>,
+    anonymity_level: AnonymityLevel,
     expires_at: Timestamp,
 }
 
@@ -674,6 +711,7 @@ impl RfqBuilder {
             side,
             quantity,
             min_quantity: None,
+            anonymity_level: AnonymityLevel::default(),
             expires_at,
         }
     }
@@ -682,6 +720,20 @@ impl RfqBuilder {
     #[must_use]
     pub fn min_quantity(mut self, min_quantity: Quantity) -> Self {
         self.min_quantity = Some(min_quantity);
+        self
+    }
+
+    /// Sets the anonymity level for this RFQ.
+    #[must_use]
+    pub fn anonymity_level(mut self, level: AnonymityLevel) -> Self {
+        self.anonymity_level = level;
+        self
+    }
+
+    /// Sets the RFQ to full anonymous mode.
+    #[must_use]
+    pub fn anonymous(mut self) -> Self {
+        self.anonymity_level = AnonymityLevel::FullAnonymous;
         self
     }
 
@@ -698,6 +750,7 @@ impl RfqBuilder {
             side: self.side,
             quantity: self.quantity,
             min_quantity: self.min_quantity,
+            anonymity_level: self.anonymity_level,
             state: RfqState::Created,
             expires_at: self.expires_at,
             quotes: Vec::new(),

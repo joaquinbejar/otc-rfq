@@ -18,6 +18,7 @@
 //! - [`resource_lock`]: Resource lock types for atomic execution
 
 pub mod acceptance_flow;
+pub mod anonymity_service;
 pub mod atomic_matcher;
 pub mod block_trade;
 pub mod block_trade_service;
@@ -82,3 +83,5 @@ pub use multi_leg_executor::{
 };
 pub use package_quote_validator::{DEFAULT_TOLERANCE_BPS, PackageQuoteValidator};
 pub use resource_lock::{ResourceLock, sort_locks};
+
+pub use anonymity_service::{AnonymityError, AnonymityResult, AnonymityService};

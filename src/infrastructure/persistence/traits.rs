@@ -24,6 +24,7 @@
 //! }
 //! ```
 
+use crate::domain::entities::anonymity::IdentityMapping;
 use crate::domain::entities::counterparty::Counterparty;
 use crate::domain::entities::rfq::Rfq;
 use crate::domain::entities::trade::Trade;
@@ -477,6 +478,93 @@ pub trait DelayedReportRepository: Send + Sync + fmt::Debug {
 
     /// Counts pending reports.
     async fn count_pending(&self) -> RepositoryResult<u64>;
+}
+
+/// Repository for identity mappings.
+///
+/// Provides persistence operations for anonymous RFQ identity mappings.
+/// This repository is critical for compliance and settlement, maintaining
+/// the link between anonymous RFQs and actual requester identities.
+///
+/// # Security
+///
+/// Access to this repository should be restricted to authorized services only.
+/// All operations should be logged for audit purposes.
+///
+/// # Examples
+///
+/// ```ignore
+/// use otc_rfq::infrastructure::persistence::traits::IdentityMappingRepository;
+///
+/// async fn example(repo: &impl IdentityMappingRepository) {
+///     // Save mapping when anonymous RFQ is created
+///     repo.save(&mapping).await?;
+///     
+///     // Retrieve for settlement
+///     let mapping = repo.get(&rfq_id).await?;
+///     
+///     // Record identity reveal
+///     repo.record_reveal(&rfq_id, &counterparty_id).await?;
+/// }
+/// ```
+#[async_trait]
+pub trait IdentityMappingRepository: Send + Sync + fmt::Debug {
+    /// Saves an identity mapping.
+    ///
+    /// Creates a new mapping for an anonymous RFQ.
+    /// This should be called when an anonymous RFQ is created.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RepositoryError::Duplicate` if a mapping already exists for this RFQ.
+    async fn save(&self, mapping: &IdentityMapping) -> RepositoryResult<()>;
+
+    /// Gets an identity mapping by RFQ ID.
+    ///
+    /// Returns `None` if no mapping exists for the RFQ.
+    ///
+    /// # Security
+    ///
+    /// Callers must verify they have authorization to access identity data.
+    async fn get(&self, rfq_id: &RfqId) -> RepositoryResult<Option<IdentityMapping>>;
+
+    /// Records that identity was revealed to a counterparty.
+    ///
+    /// This is an append-only operation for audit purposes.
+    /// Updates the mapping's `revealed_at` timestamp (if first reveal)
+    /// and adds the counterparty to the `revealed_to` list.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RepositoryError::NotFound` if no mapping exists for the RFQ.
+    async fn record_reveal(
+        &self,
+        rfq_id: &RfqId,
+        revealed_to: &CounterpartyId,
+    ) -> RepositoryResult<()>;
+
+    /// Finds all mappings that have been revealed.
+    ///
+    /// Returns mappings where identity has been revealed to at least one party.
+    async fn find_revealed(&self) -> RepositoryResult<Vec<IdentityMapping>>;
+
+    /// Finds all mappings that have not been revealed.
+    ///
+    /// Returns mappings where identity has not been revealed to anyone.
+    async fn find_unrevealed(&self) -> RepositoryResult<Vec<IdentityMapping>>;
+
+    /// Deletes an identity mapping by RFQ ID.
+    ///
+    /// Returns `Ok(true)` if the mapping was deleted, `Ok(false)` if it didn't exist.
+    ///
+    /// # Warning
+    ///
+    /// Deleting identity mappings may have compliance implications.
+    /// Consider soft-delete or archival instead.
+    async fn delete(&self, rfq_id: &RfqId) -> RepositoryResult<bool>;
+
+    /// Counts all identity mappings.
+    async fn count(&self) -> RepositoryResult<u64>;
 }
 
 #[cfg(test)]

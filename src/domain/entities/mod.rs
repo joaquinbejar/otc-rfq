@@ -16,6 +16,7 @@
 //! - `MmPerformanceMetrics`: Market maker performance tracking
 
 pub mod allocation;
+pub mod anonymity;
 pub mod block_trade;
 pub mod counter_quote;
 pub mod counterparty;
@@ -32,6 +33,7 @@ pub mod venue;
 mod tests;
 
 pub use allocation::Allocation;
+pub use anonymity::{AnonymityLevel, AnonymousRfqView, IdentityMapping};
 pub use block_trade::{
     BlockTrade, BlockTradeId, BlockTradeState, BlockTradeValidation, InvalidBlockTradeStateError,
 };
