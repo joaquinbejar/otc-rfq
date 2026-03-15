@@ -402,11 +402,12 @@ impl IdentityMapping {
 impl fmt::Display for IdentityMapping {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.is_revealed() {
+            let count = self.revealed_to.len();
+            let noun = if count == 1 { "party" } else { "parties" };
             write!(
                 f,
-                "IdentityMapping({}, revealed to {} parties)",
-                self.rfq_id,
-                self.revealed_to.len()
+                "IdentityMapping({}, revealed to {} {})",
+                self.rfq_id, count, noun
             )
         } else {
             write!(f, "IdentityMapping({}, not revealed)", self.rfq_id)
@@ -642,6 +643,6 @@ mod tests {
         mapping.reveal_to(CounterpartyId::new("mm-1"));
 
         let display_after = mapping.to_string();
-        assert!(display_after.contains("revealed to 1 parties"));
+        assert!(display_after.contains("revealed to 1 party"));
     }
 }

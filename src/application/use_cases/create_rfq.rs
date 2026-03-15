@@ -196,7 +196,7 @@ impl CreateRfqUseCase {
         // 7. Create RFQ aggregate with anonymity level
         let rfq = RfqBuilder::new(client_id, instrument, request.side, quantity, expires_at)
             .anonymity_level(request.anonymity_level())
-            .build();
+            .try_build()?;
 
         // 8. Persist RFQ
         self.rfq_repository

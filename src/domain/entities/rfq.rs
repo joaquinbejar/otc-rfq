@@ -769,13 +769,28 @@ impl RfqBuilder {
     ///
     /// Returns `DomainError` if validation fails.
     pub fn try_build(self) -> DomainResult<Rfq> {
-        Rfq::new(
-            self.client_id,
-            self.instrument,
-            self.side,
-            self.quantity,
-            self.expires_at,
-        )
+        Rfq::validate_quantity(&self.quantity)?;
+        Rfq::validate_expiry(&self.expires_at)?;
+
+        let now = Timestamp::now();
+        Ok(Rfq {
+            id: RfqId::new_v4(),
+            client_id: self.client_id,
+            instrument: self.instrument,
+            side: self.side,
+            quantity: self.quantity,
+            min_quantity: self.min_quantity,
+            anonymity_level: self.anonymity_level,
+            state: RfqState::Created,
+            expires_at: self.expires_at,
+            quotes: Vec::new(),
+            selected_quote_id: None,
+            compliance_result: None,
+            failure_reason: None,
+            version: 1,
+            created_at: now,
+            updated_at: now,
+        })
     }
 }
 
