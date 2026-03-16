@@ -83,6 +83,12 @@ lint:
 	@echo "🔍 Running clippy lints..."
 	cargo clippy --all-targets --all-features -- -D warnings
 
+.PHONY: lint-ci
+lint-ci:
+	@echo "🔍 Running clippy lints (CI mode - matches GitHub Actions exactly)..."
+	@echo "⚠️  This will fail on warnings that are allowed locally but forbidden in CI"
+	cargo clippy --all-targets --all-features -- -D warnings
+
 .PHONY: lint-fix
 lint-fix:
 	@echo "🔧 Auto-fixing lint issues..."
