@@ -198,10 +198,7 @@ impl QuoteNormalizer {
         quotes
             .iter()
             .map(|q| {
-                let quote_type = quote_types
-                    .get(&q.id())
-                    .copied()
-                    .unwrap_or(QuoteType::Firm);
+                let quote_type = quote_types.get(&q.id()).copied().unwrap_or(QuoteType::Firm);
                 self.normalize(q, quote_type, source_currency)
             })
             .collect()
@@ -226,7 +223,11 @@ impl QuoteNormalizer {
         if let Some(fx_rate) = self.get_fx_rate(source, config.base_currency()) {
             let converted = fx_rate.convert(price.get());
             if let Ok(new_price) = Price::from_decimal(converted) {
-                return (new_price, Some(fx_rate.rate()), config.base_currency().to_string());
+                return (
+                    new_price,
+                    Some(fx_rate.rate()),
+                    config.base_currency().to_string(),
+                );
             }
         }
 
@@ -523,9 +524,7 @@ mod tests {
     #[test]
     fn sort_by_price_buy_side() {
         let normalizer = QuoteNormalizer::new();
-        let config = NormalizationConfig::builder()
-            .include_fees(false)
-            .build();
+        let config = NormalizationConfig::builder().include_fees(false).build();
         let quotes = vec![
             create_test_quote(100.0, 10.0, "venue-1"),
             create_test_quote(95.0, 10.0, "venue-2"),
@@ -548,9 +547,7 @@ mod tests {
     #[test]
     fn sort_by_price_sell_side() {
         let normalizer = QuoteNormalizer::new();
-        let config = NormalizationConfig::builder()
-            .include_fees(false)
-            .build();
+        let config = NormalizationConfig::builder().include_fees(false).build();
         let quotes = vec![
             create_test_quote(100.0, 10.0, "venue-1"),
             create_test_quote(95.0, 10.0, "venue-2"),
