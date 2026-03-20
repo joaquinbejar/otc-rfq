@@ -29,6 +29,7 @@ pub mod package_quote;
 pub mod quote;
 pub mod quote_normalizer;
 pub mod rfq;
+pub mod settlement;
 pub mod streaming_quote;
 pub mod trade;
 pub mod venue;
@@ -67,6 +68,10 @@ pub use quote_normalizer::{
     NormalizedQuote, QuoteType,
 };
 pub use rfq::{ComplianceResult, Rfq, RfqBuilder};
+pub use settlement::{
+    IncentiveEvent, IncentiveSettlement, SettlementError, SettlementId, SettlementPeriod,
+    SettlementStatus,
+};
 pub use streaming_quote::{
     BestQuote, DEFAULT_MAX_QUOTES_PER_SECOND, DEFAULT_STALENESS_CHECK_INTERVAL_MS, DEFAULT_TTL_MS,
     PriceLevel, StreamingQuote, StreamingQuoteConfig, StreamingQuoteConfigBuilder,

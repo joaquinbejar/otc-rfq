@@ -26,6 +26,7 @@ pub mod capacity_manager;
 pub mod collateral_lock;
 pub mod compensating_trade;
 pub mod conflict_resolver;
+pub mod incentive_settlement_service;
 pub mod last_look;
 pub mod lock_manager;
 pub mod market_calendar;
@@ -94,6 +95,7 @@ pub use capacity_manager::{
     CapacityManager, CapacityManagerConfig, DEFAULT_ADJUSTMENT_PERCENTAGE,
     DEFAULT_DECREASE_THRESHOLD, DEFAULT_INCREASE_THRESHOLD, MmCapacityRepository,
 };
+pub use incentive_settlement_service::IncentiveSettlementService;
 pub use mm_incentive_service::{MmIncentiveError, MmIncentiveResult, MmIncentiveService};
 pub use streaming_quote::{
     StreamingQuoteRejectReason, StreamingQuoteResult, StreamingQuoteService,
