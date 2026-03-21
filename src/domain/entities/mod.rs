@@ -69,8 +69,8 @@ pub use quote_normalizer::{
 };
 pub use rfq::{ComplianceResult, Rfq, RfqBuilder};
 pub use settlement::{
-    IncentiveEvent, IncentiveSettlement, SettlementError, SettlementId, SettlementPeriod,
-    SettlementStatus,
+    IncentiveEvent, IncentiveReport, IncentiveSettlement, IncentiveSummary, ReportDetailLevel,
+    SettlementError, SettlementId, SettlementPeriod, SettlementStatus, TradeIncentiveDetail,
 };
 pub use streaming_quote::{
     BestQuote, DEFAULT_MAX_QUOTES_PER_SECOND, DEFAULT_STALENESS_CHECK_INTERVAL_MS, DEFAULT_TTL_MS,

@@ -72,6 +72,7 @@ toml = { workspace = true }
 rand = { workspace = true }
 tonic-prost = { workspace = true }
 tokio-stream = { workspace = true }
+printpdf = { workspace = true }
 
 # IronFix for FIX protocol
 ironfix-core = { workspace = true }
@@ -155,6 +156,7 @@ futures = "0.3"
 parking_lot = "0.12"
 dashmap = "6.1"
 bytes = "1.11"
+printpdf = "0.7"
 
 # Build dependencies
 tonic-build = "0.14"

@@ -593,6 +593,299 @@ fn amount_from_bps(notional: Decimal, bps: Decimal) -> Result<Decimal, Settlemen
         .ok_or(SettlementError::Overflow("amount_from_bps"))
 }
 
+// ============================================================================
+// IncentiveReport
+// ============================================================================
+
+/// Level of detail for incentive reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReportDetailLevel {
+    /// Summary only (aggregated metrics).
+    Summary,
+    /// Detailed breakdown including individual trades.
+    Detailed,
+}
+
+/// Summary of incentive metrics for a settlement period.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IncentiveSummary {
+    /// Total number of trades.
+    total_trades: u64,
+    /// Total trade volume in USD.
+    total_volume_usd: Decimal,
+    /// Total base rebates earned (negative value = payment to MM).
+    total_base_rebates_usd: Decimal,
+    /// Total spread bonuses earned (negative value = payment to MM).
+    total_bonuses_usd: Decimal,
+    /// Net payout amount (negative value = payment to MM).
+    net_payout_usd: Decimal,
+}
+
+impl IncentiveSummary {
+    /// Creates a new incentive summary.
+    #[must_use]
+    pub const fn new(
+        total_trades: u64,
+        total_volume_usd: Decimal,
+        total_base_rebates_usd: Decimal,
+        total_bonuses_usd: Decimal,
+        net_payout_usd: Decimal,
+    ) -> Self {
+        Self {
+            total_trades,
+            total_volume_usd,
+            total_base_rebates_usd,
+            total_bonuses_usd,
+            net_payout_usd,
+        }
+    }
+
+    /// Returns the total number of trades.
+    #[inline]
+    #[must_use]
+    pub const fn total_trades(&self) -> u64 {
+        self.total_trades
+    }
+
+    /// Returns the total volume in USD.
+    #[inline]
+    #[must_use]
+    pub fn total_volume_usd(&self) -> Decimal {
+        self.total_volume_usd
+    }
+
+    /// Returns the total base rebates in USD.
+    #[inline]
+    #[must_use]
+    pub fn total_base_rebates_usd(&self) -> Decimal {
+        self.total_base_rebates_usd
+    }
+
+    /// Returns the total bonuses in USD.
+    #[inline]
+    #[must_use]
+    pub fn total_bonuses_usd(&self) -> Decimal {
+        self.total_bonuses_usd
+    }
+
+    /// Returns the net payout amount in USD.
+    #[inline]
+    #[must_use]
+    pub fn net_payout_usd(&self) -> Decimal {
+        self.net_payout_usd
+    }
+}
+
+/// Detailed breakdown of incentive for a single trade.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TradeIncentiveDetail {
+    /// Trade identifier.
+    trade_id: TradeId,
+    /// Trade timestamp.
+    timestamp: Timestamp,
+    /// Trade notional in USD.
+    notional: Decimal,
+    /// MM tier at time of trade.
+    tier: crate::domain::entities::mm_incentive::IncentiveTier,
+    /// Base rebate in basis points.
+    base_rebate_bps: Decimal,
+    /// Spread bonus in basis points.
+    spread_bonus_bps: Decimal,
+    /// Total rebate amount in USD.
+    rebate_amount: Decimal,
+}
+
+impl TradeIncentiveDetail {
+    /// Creates a new trade incentive detail.
+    #[must_use]
+    pub const fn new(
+        trade_id: TradeId,
+        timestamp: Timestamp,
+        notional: Decimal,
+        tier: crate::domain::entities::mm_incentive::IncentiveTier,
+        base_rebate_bps: Decimal,
+        spread_bonus_bps: Decimal,
+        rebate_amount: Decimal,
+    ) -> Self {
+        Self {
+            trade_id,
+            timestamp,
+            notional,
+            tier,
+            base_rebate_bps,
+            spread_bonus_bps,
+            rebate_amount,
+        }
+    }
+
+    /// Returns the trade ID.
+    #[inline]
+    #[must_use]
+    pub const fn trade_id(&self) -> TradeId {
+        self.trade_id
+    }
+
+    /// Returns the timestamp.
+    #[inline]
+    #[must_use]
+    pub const fn timestamp(&self) -> Timestamp {
+        self.timestamp
+    }
+
+    /// Returns the notional.
+    #[inline]
+    #[must_use]
+    pub fn notional(&self) -> Decimal {
+        self.notional
+    }
+
+    /// Returns the tier.
+    #[inline]
+    #[must_use]
+    pub const fn tier(&self) -> crate::domain::entities::mm_incentive::IncentiveTier {
+        self.tier
+    }
+
+    /// Returns the base rebate in basis points.
+    #[inline]
+    #[must_use]
+    pub fn base_rebate_bps(&self) -> Decimal {
+        self.base_rebate_bps
+    }
+
+    /// Returns the spread bonus in basis points.
+    #[inline]
+    #[must_use]
+    pub fn spread_bonus_bps(&self) -> Decimal {
+        self.spread_bonus_bps
+    }
+
+    /// Returns the rebate amount.
+    #[inline]
+    #[must_use]
+    pub fn rebate_amount(&self) -> Decimal {
+        self.rebate_amount
+    }
+}
+
+/// Comprehensive incentive report for a market maker.
+///
+/// Provides detailed breakdown of incentives earned, penalties applied,
+/// and tier status for a specific settlement period.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IncentiveReport {
+    /// Settlement identifier.
+    settlement_id: SettlementId,
+    /// Market maker identifier.
+    mm_id: CounterpartyId,
+    /// Settlement period.
+    period: SettlementPeriod,
+    /// Timestamp when report was generated.
+    generated_at: Timestamp,
+    /// Current tier at time of report generation.
+    current_tier: crate::domain::entities::mm_incentive::IncentiveTier,
+    /// Aggregated summary metrics.
+    summary: IncentiveSummary,
+    /// Penalties calculated from performance metrics (if available).
+    penalties: Option<crate::domain::entities::mm_incentive::PenaltyResult>,
+    /// Optional detailed breakdown by trade.
+    trade_details: Option<Vec<TradeIncentiveDetail>>,
+}
+
+impl IncentiveReport {
+    /// Creates a new incentive report.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        settlement_id: SettlementId,
+        mm_id: CounterpartyId,
+        period: SettlementPeriod,
+        generated_at: Timestamp,
+        current_tier: crate::domain::entities::mm_incentive::IncentiveTier,
+        summary: IncentiveSummary,
+        penalties: Option<crate::domain::entities::mm_incentive::PenaltyResult>,
+        trade_details: Option<Vec<TradeIncentiveDetail>>,
+    ) -> Self {
+        Self {
+            settlement_id,
+            mm_id,
+            period,
+            generated_at,
+            current_tier,
+            summary,
+            penalties,
+            trade_details,
+        }
+    }
+
+    /// Returns the settlement ID.
+    #[inline]
+    #[must_use]
+    pub const fn settlement_id(&self) -> SettlementId {
+        self.settlement_id
+    }
+
+    /// Returns the market maker ID.
+    #[inline]
+    #[must_use]
+    pub fn mm_id(&self) -> &CounterpartyId {
+        &self.mm_id
+    }
+
+    /// Returns the settlement period.
+    #[inline]
+    #[must_use]
+    pub const fn period(&self) -> SettlementPeriod {
+        self.period
+    }
+
+    /// Returns the generation timestamp.
+    #[inline]
+    #[must_use]
+    pub const fn generated_at(&self) -> Timestamp {
+        self.generated_at
+    }
+
+    /// Returns the current tier.
+    #[inline]
+    #[must_use]
+    pub const fn current_tier(&self) -> crate::domain::entities::mm_incentive::IncentiveTier {
+        self.current_tier
+    }
+
+    /// Returns the summary.
+    #[inline]
+    #[must_use]
+    pub const fn summary(&self) -> &IncentiveSummary {
+        &self.summary
+    }
+
+    /// Returns the penalties.
+    #[inline]
+    #[must_use]
+    pub const fn penalties(&self) -> Option<&crate::domain::entities::mm_incentive::PenaltyResult> {
+        self.penalties.as_ref()
+    }
+
+    /// Returns the trade details.
+    #[inline]
+    #[must_use]
+    pub fn trade_details(&self) -> Option<&[TradeIncentiveDetail]> {
+        self.trade_details.as_deref()
+    }
+
+    /// Returns the detail level of this report.
+    #[inline]
+    #[must_use]
+    pub fn detail_level(&self) -> ReportDetailLevel {
+        if self.trade_details.is_some() {
+            ReportDetailLevel::Detailed
+        } else {
+            ReportDetailLevel::Summary
+        }
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
