@@ -718,6 +718,7 @@ mod tests {
         use crate::domain::value_objects::SettlementMethod;
 
         #[test]
+        #[allow(deprecated)]
         fn roundtrip() {
             let event = TradeExecuted::new(
                 test_rfq_id(),

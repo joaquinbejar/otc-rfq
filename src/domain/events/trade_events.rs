@@ -46,8 +46,21 @@ pub struct TradeExecuted {
 }
 
 impl TradeExecuted {
+    /// Creates a builder for [`TradeExecuted`] events.
+    pub fn builder() -> TradeExecutedBuilder {
+        TradeExecutedBuilder::default()
+    }
+
     /// Creates a new TradeExecuted event.
+    ///
+    /// # Deprecated
+    ///
+    /// Use [`TradeExecuted::builder()`] instead. This method is kept for SBE deserialization compatibility.
     #[must_use]
+    #[deprecated(
+        since = "0.1.0",
+        note = "please use `TradeExecuted::builder()` instead"
+    )]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         rfq_id: RfqId,
@@ -73,35 +86,134 @@ impl TradeExecuted {
             net_fee: None,
         }
     }
+}
 
-    /// Creates a new TradeExecuted event with fees.
+/// Builder for constructing a [`TradeExecuted`] event.
+///
+/// # Example
+///
+/// ```
+/// use otc_rfq::domain::events::trade_events::TradeExecuted;
+/// use otc_rfq::domain::value_objects::*;
+///
+/// // All required fields must be set before calling `.build()`,
+/// let event = TradeExecuted::builder()
+///     .rfq_id(RfqId::new_v4())
+///     .trade_id(TradeId::new_v4())
+///     .quote_id(QuoteId::new_v4())
+///     .venue_id(VenueId::new("venue-1"))
+///     .counterparty_id(CounterpartyId::new("client-1"))
+///     .price(Price::new(50000.0).unwrap())
+///     .quantity(Quantity::new(1.0).unwrap())
+///     .settlement_method(SettlementMethod::OffChain)
+///     .taker_fee(rust_decimal::Decimal::new(50, 1))
+///     .build();
+/// ```
+#[derive(Debug, Clone, Default)]
+#[must_use = "builders do nothing unless .build() is called"]
+pub struct TradeExecutedBuilder {
+    rfq_id: Option<RfqId>,
+    trade_id: Option<TradeId>,
+    quote_id: Option<QuoteId>,
+    venue_id: Option<VenueId>,
+    counterparty_id: Option<CounterpartyId>,
+    price: Option<Price>,
+    quantity: Option<Quantity>,
+    settlement_method: Option<SettlementMethod>,
+    taker_fee: Option<rust_decimal::Decimal>,
+    maker_fee: Option<rust_decimal::Decimal>,
+    net_fee: Option<rust_decimal::Decimal>,
+}
+
+impl TradeExecutedBuilder {
+    /// Sets the RFQ ID.
+    pub fn rfq_id(mut self, value: RfqId) -> Self {
+        self.rfq_id = Some(value);
+        self
+    }
+
+    /// Sets the trade ID.
+    pub fn trade_id(mut self, value: TradeId) -> Self {
+        self.trade_id = Some(value);
+        self
+    }
+
+    /// Sets the quote ID.
+    pub fn quote_id(mut self, value: QuoteId) -> Self {
+        self.quote_id = Some(value);
+        self
+    }
+
+    /// Sets the venue ID.
+    pub fn venue_id(mut self, value: VenueId) -> Self {
+        self.venue_id = Some(value);
+        self
+    }
+
+    /// Sets the counterparty ID.
+    pub fn counterparty_id(mut self, value: CounterpartyId) -> Self {
+        self.counterparty_id = Some(value);
+        self
+    }
+
+    /// Sets the execution price.
+    pub fn price(mut self, value: Price) -> Self {
+        self.price = Some(value);
+        self
+    }
+
+    /// Sets the executed quantity.
+    pub fn quantity(mut self, value: Quantity) -> Self {
+        self.quantity = Some(value);
+        self
+    }
+
+    /// Sets the settlement method.
+    pub fn settlement_method(mut self, value: SettlementMethod) -> Self {
+        self.settlement_method = Some(value);
+        self
+    }
+
+    /// Sets the taker fee.
+    pub fn taker_fee(mut self, value: rust_decimal::Decimal) -> Self {
+        self.taker_fee = Some(value);
+        self
+    }
+
+    /// Sets the maker fee.
+    pub fn maker_fee(mut self, value: rust_decimal::Decimal) -> Self {
+        self.maker_fee = Some(value);
+        self
+    }
+
+    /// Sets the net fee.
+    pub fn net_fee(mut self, value: rust_decimal::Decimal) -> Self {
+        self.net_fee = Some(value);
+        self
+    }
+
+    /// Builds the `TradeExecuted` event.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any required field is missing.
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
-    pub fn with_fees(
-        rfq_id: RfqId,
-        trade_id: TradeId,
-        quote_id: QuoteId,
-        venue_id: VenueId,
-        counterparty_id: CounterpartyId,
-        price: Price,
-        quantity: Quantity,
-        settlement_method: SettlementMethod,
-        taker_fee: rust_decimal::Decimal,
-        maker_fee: rust_decimal::Decimal,
-        net_fee: rust_decimal::Decimal,
-    ) -> Self {
-        Self {
-            metadata: EventMetadata::for_rfq(rfq_id),
-            trade_id,
-            quote_id,
-            venue_id,
-            counterparty_id,
-            price,
-            quantity,
-            settlement_method,
-            taker_fee: Some(taker_fee),
-            maker_fee: Some(maker_fee),
-            net_fee: Some(net_fee),
+    #[allow(clippy::expect_used)]
+    pub fn build(self) -> TradeExecuted {
+        TradeExecuted {
+            metadata: EventMetadata::for_rfq(self.rfq_id.expect("rfq_id is required")),
+            trade_id: self.trade_id.expect("trade_id is required"),
+            quote_id: self.quote_id.expect("quote_id is required"),
+            venue_id: self.venue_id.expect("venue_id is required"),
+            counterparty_id: self.counterparty_id.expect("counterparty_id is required"),
+            price: self.price.expect("price is required"),
+            quantity: self.quantity.expect("quantity is required"),
+            settlement_method: self
+                .settlement_method
+                .expect("settlement_method is required"),
+            taker_fee: self.taker_fee,
+            maker_fee: self.maker_fee,
+            net_fee: self.net_fee,
         }
     }
 }
@@ -414,16 +526,16 @@ mod tests {
         fn creates_event() {
             let rfq_id = test_rfq_id();
             let trade_id = test_trade_id();
-            let event = TradeExecuted::new(
-                rfq_id,
-                trade_id,
-                test_quote_id(),
-                test_venue_id(),
-                test_counterparty_id(),
-                Price::new(50000.0).unwrap(),
-                Quantity::new(1.0).unwrap(),
-                SettlementMethod::OnChain(Blockchain::Ethereum),
-            );
+            let event = TradeExecuted::builder()
+                .rfq_id(rfq_id)
+                .trade_id(trade_id)
+                .quote_id(test_quote_id())
+                .venue_id(test_venue_id())
+                .counterparty_id(test_counterparty_id())
+                .price(Price::new(50000.0).unwrap())
+                .quantity(Quantity::new(1.0).unwrap())
+                .settlement_method(SettlementMethod::OnChain(Blockchain::Ethereum))
+                .build();
 
             assert_eq!(event.rfq_id(), Some(rfq_id));
             assert_eq!(event.trade_id, trade_id);
@@ -433,20 +545,74 @@ mod tests {
 
         #[test]
         fn serde_roundtrip() {
-            let event = TradeExecuted::new(
-                test_rfq_id(),
-                test_trade_id(),
-                test_quote_id(),
-                test_venue_id(),
-                test_counterparty_id(),
-                Price::new(50000.0).unwrap(),
-                Quantity::new(1.0).unwrap(),
-                SettlementMethod::OffChain,
-            );
+            let event = TradeExecuted::builder()
+                .rfq_id(test_rfq_id())
+                .trade_id(test_trade_id())
+                .quote_id(test_quote_id())
+                .venue_id(test_venue_id())
+                .counterparty_id(test_counterparty_id())
+                .price(Price::new(50000.0).unwrap())
+                .quantity(Quantity::new(1.0).unwrap())
+                .settlement_method(SettlementMethod::OffChain)
+                .build();
 
             let json = serde_json::to_string(&event).unwrap();
             let deserialized: TradeExecuted = serde_json::from_str(&json).unwrap();
             assert_eq!(event.trade_id, deserialized.trade_id);
+        }
+
+        #[test]
+        fn builder_creates_event_without_fees() {
+            let event = TradeExecuted::builder()
+                .rfq_id(test_rfq_id())
+                .trade_id(test_trade_id())
+                .quote_id(test_quote_id())
+                .venue_id(test_venue_id())
+                .counterparty_id(test_counterparty_id())
+                .price(Price::new(50000.0).unwrap())
+                .quantity(Quantity::new(1.0).unwrap())
+                .settlement_method(SettlementMethod::OffChain)
+                .build();
+
+            assert!(event.taker_fee.is_none());
+            assert!(event.maker_fee.is_none());
+            assert!(event.net_fee.is_none());
+        }
+
+        #[test]
+        fn builder_creates_event_with_fees() {
+            let event = TradeExecuted::builder()
+                .rfq_id(test_rfq_id())
+                .trade_id(test_trade_id())
+                .quote_id(test_quote_id())
+                .venue_id(test_venue_id())
+                .counterparty_id(test_counterparty_id())
+                .price(Price::new(50000.0).unwrap())
+                .quantity(Quantity::new(1.0).unwrap())
+                .settlement_method(SettlementMethod::OffChain)
+                .taker_fee(rust_decimal::Decimal::new(50, 1))
+                .maker_fee(rust_decimal::Decimal::new(-20, 1))
+                .net_fee(rust_decimal::Decimal::new(30, 1))
+                .build();
+
+            assert_eq!(event.taker_fee, Some(rust_decimal::Decimal::new(50, 1)));
+            assert_eq!(event.maker_fee, Some(rust_decimal::Decimal::new(-20, 1)));
+            assert_eq!(event.net_fee, Some(rust_decimal::Decimal::new(30, 1)));
+        }
+
+        #[test]
+        #[should_panic(expected = "price is required")]
+        fn builder_missing_required_field_panics() {
+            let _event = TradeExecuted::builder()
+                .rfq_id(test_rfq_id())
+                .trade_id(test_trade_id())
+                .quote_id(test_quote_id())
+                .venue_id(test_venue_id())
+                .counterparty_id(test_counterparty_id())
+                // .price(Price::new(50000.0).unwrap()) // Missing required field
+                .quantity(Quantity::new(1.0).unwrap())
+                .settlement_method(SettlementMethod::OffChain)
+                .build();
         }
     }
 

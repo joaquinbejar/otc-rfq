@@ -228,16 +228,16 @@ impl ExecuteTradeUseCase {
             .map_err(ApplicationError::RepositoryError)?;
 
         // Publish event
-        let event = TradeExecuted::new(
-            rfq.id(),
-            trade.id(),
-            quote.id(),
-            quote.venue_id().clone(),
-            rfq.client_id().clone(),
-            trade.price(),
-            trade.quantity(),
-            execution_result.settlement_method(),
-        );
+        let event = TradeExecuted::builder()
+            .rfq_id(rfq.id())
+            .trade_id(trade.id())
+            .quote_id(quote.id())
+            .venue_id(quote.venue_id().clone())
+            .counterparty_id(rfq.client_id().clone())
+            .price(trade.price())
+            .quantity(trade.quantity())
+            .settlement_method(execution_result.settlement_method())
+            .build();
         self.event_publisher
             .publish_trade_executed(event.clone())
             .await?;
