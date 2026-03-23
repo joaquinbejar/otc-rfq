@@ -40,6 +40,7 @@ impl DomainEventDispatcher {
     }
 
     /// Serializes and dispatches an event.
+    #[allow(clippy::unused_async)]
     async fn dispatch<T: Serialize>(&self, subject: String, event: &T) -> Result<(), String> {
         let payload = serde_json::to_string(event).map_err(|e| format!("{e}"))?;
         let msg = (subject, payload);

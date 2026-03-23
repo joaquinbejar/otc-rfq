@@ -404,6 +404,7 @@ where
     }
 
     /// Handles execution failure by marking trade as failed and emitting event.
+    #[allow(clippy::unused_async)]
     async fn handle_failure(
         &self,
         trade: &mut BlockTrade,

@@ -918,6 +918,7 @@ impl FixMMAdapter {
         }
     }
 
+    #[allow(clippy::unused_async)]
     async fn handle_reject(&self, fields: Vec<(u32, String)>) {
         let text = fields
             .iter()

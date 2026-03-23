@@ -233,6 +233,27 @@ pub enum DomainError {
         /// Reason for invalidity.
         reason: String,
     },
+
+    // Schema errors
+    /// Schema not found.
+    SchemaNotFound {
+        /// Event type.
+        event_type: String,
+        /// Schema version.
+        version: String,
+    },
+    /// Schema already registered.
+    SchemaAlreadyRegistered {
+        /// Event type.
+        event_type: String,
+        /// Schema version.
+        version: String,
+    },
+    /// Schema generation failed.
+    SchemaGenerationFailed {
+        /// Reason for failure.
+        reason: String,
+    },
 }
 
 impl fmt::Display for DomainError {
@@ -397,6 +418,21 @@ impl fmt::Display for DomainError {
             }
             Self::InvalidNotificationPreferences { reason } => {
                 write!(f, "invalid notification preferences: {}", reason)
+            }
+            Self::SchemaNotFound {
+                event_type,
+                version,
+            } => {
+                write!(f, "schema not found: {} v{}", event_type, version)
+            }
+            Self::SchemaAlreadyRegistered {
+                event_type,
+                version,
+            } => {
+                write!(f, "schema already registered: {} v{}", event_type, version)
+            }
+            Self::SchemaGenerationFailed { reason } => {
+                write!(f, "schema generation failed: {}", reason)
             }
         }
     }

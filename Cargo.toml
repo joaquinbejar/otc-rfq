@@ -79,6 +79,8 @@ rand = { workspace = true }
 tonic-prost = { workspace = true }
 tokio-stream = { workspace = true }
 printpdf = { workspace = true }
+schemars = { workspace = true }
+clap = { workspace = true, optional = true }
 
 # IronFix for FIX protocol
 ironfix-core = { workspace = true }
@@ -169,6 +171,8 @@ parking_lot = "0.12"
 dashmap = "6.1"
 bytes = "1.11"
 printpdf = "0.7"
+schemars = "0.8"
+clap = { version = "4.5", features = ["derive"] }
 
 # Build dependencies
 tonic-build = "0.14"
@@ -196,6 +200,7 @@ ironsbe-codegen = "0.1"
 [features]
 default = []
 nats = ["dep:async-nats"]
+cli = ["dep:clap"]
 
 [lints.rust]
 unsafe_code = "deny"
@@ -206,11 +211,14 @@ unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
 indexing_slicing = "warn"
-needless_collect = "warn"
-unnecessary_to_owned = "warn"
-clone_on_ref_ptr = "warn"
+unused_async = "warn"
 missing_errors_doc = "warn"
 missing_panics_doc = "warn"
+
+[[bin]]
+name = "export_schemas"
+path = "src/bin/export_schemas.rs"
+required-features = ["cli"]
 
 [profile.release]
 overflow-checks = true

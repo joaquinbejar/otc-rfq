@@ -10,6 +10,8 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use crate::infrastructure::messaging::dispatcher::PublishPayload;
+use serde_json::Value;
+use std::collections::HashMap;
 
 /// Background worker for publishing events to NATS JetStream.
 pub struct NatsPublisherWorker {
@@ -18,6 +20,34 @@ pub struct NatsPublisherWorker {
     receiver: mpsc::Receiver<PublishPayload>,
     stream_name: String,
     subject_prefix: String,
+}
+
+/// Extracts NATS headers from event metadata.
+///
+/// This is a pure function that converts event metadata into NATS headers,
+/// including correlation_id and schema_version when present.
+pub fn extract_nats_headers(metadata: &Value, _subject: &str) -> HashMap<String, String> {
+    let mut headers = HashMap::new();
+
+    // Extract correlation_id from event_id
+    if let Some(e_id) = metadata.get("event_id").and_then(|v| v.as_str()) {
+        headers.insert("correlation_id".to_string(), e_id.to_string());
+    }
+
+    // Extract schema_version
+    if let Some(schema_version) = metadata.get("schema_version")
+        && let Some(obj) = schema_version.as_object()
+        && let (Some(major), Some(minor), Some(patch)) = (
+            obj.get("major").and_then(|v| v.as_u64()),
+            obj.get("minor").and_then(|v| v.as_u64()),
+            obj.get("patch").and_then(|v| v.as_u64()),
+        )
+    {
+        let version_str = format!("{}.{}.{}", major, minor, patch);
+        headers.insert("schema_version".to_string(), version_str);
+    }
+
+    headers
 }
 
 impl NatsPublisherWorker {
@@ -130,6 +160,7 @@ impl NatsPublisherWorker {
         #[allow(clippy::collapsible_if)]
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(payload) {
             if let Some(metadata) = json.get("metadata") {
+                // Extract timestamp (legacy logic)
                 if let Some(ts) = metadata.get("timestamp") {
                     if let Some(ts_str) = ts.as_str() {
                         headers.insert("timestamp", ts_str);
@@ -137,8 +168,11 @@ impl NatsPublisherWorker {
                         headers.insert("timestamp", ts_u64.to_string().as_str());
                     }
                 }
-                if let Some(e_id) = metadata.get("event_id").and_then(|v| v.as_str()) {
-                    headers.insert("correlation_id", e_id);
+
+                // Extract other headers using helper function
+                let extracted_headers = extract_nats_headers(metadata, subject);
+                for (key, value) in extracted_headers {
+                    headers.insert(key.as_str(), value.as_str());
                 }
             }
         }
@@ -226,5 +260,63 @@ mod tests {
         assert!(contents.contains(&format!("[{}] {}\n", subject, payload)));
 
         let _ = tokio::fs::remove_file(&dlq_path).await;
+    }
+
+    #[tokio::test]
+    async fn test_extract_nats_headers_with_schema_version() {
+        let metadata = serde_json::json!({
+            "event_id": "550e8400-e29b-41d4-a716-446655440000",
+            "rfq_id": "660f9501-f39c-52e5-b827-557766551111",
+            "timestamp": "2023-01-01T00:00:00Z",
+            "schema_version": {
+                "major": 1,
+                "minor": 2,
+                "patch": 3
+            }
+        });
+
+        let headers = extract_nats_headers(&metadata, "otc.test.RfqCreated");
+
+        assert_eq!(
+            headers.get("correlation_id"),
+            Some(&"550e8400-e29b-41d4-a716-446655440000".to_string())
+        );
+        assert_eq!(headers.get("schema_version"), Some(&"1.2.3".to_string()));
+        assert_eq!(headers.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_extract_nats_headers_without_schema_version() {
+        let metadata = serde_json::json!({
+            "event_id": "550e8400-e29b-41d4-a716-446655440000",
+            "rfq_id": "660f9501-f39c-52e5-b827-557766551111",
+            "timestamp": "2023-01-01T00:00:00Z"
+        });
+
+        let headers = extract_nats_headers(&metadata, "otc.test.RfqCreated");
+
+        assert_eq!(
+            headers.get("correlation_id"),
+            Some(&"550e8400-e29b-41d4-a716-446655440000".to_string())
+        );
+        assert_eq!(headers.get("schema_version"), None);
+        assert_eq!(headers.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_extract_nats_headers_with_malformed_schema_version() {
+        let metadata = serde_json::json!({
+            "event_id": "550e8400-e29b-41d4-a716-446655440000",
+            "schema_version": "not_an_object"
+        });
+
+        let headers = extract_nats_headers(&metadata, "otc.test.RfqCreated");
+
+        assert_eq!(
+            headers.get("correlation_id"),
+            Some(&"550e8400-e29b-41d4-a716-446655440000".to_string())
+        );
+        assert_eq!(headers.get("schema_version"), None);
+        assert_eq!(headers.len(), 1);
     }
 }

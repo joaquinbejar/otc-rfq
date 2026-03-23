@@ -1024,6 +1024,7 @@ fn validate_create_rfq_request(
     Ok(())
 }
 
+#[allow(clippy::unused_async)]
 async fn fetch_all_rfqs(
     _repo: &Arc<dyn RfqRepository>,
 ) -> Result<Vec<Rfq>, (StatusCode, Json<ErrorResponse>)> {

@@ -9,11 +9,13 @@
 //! - **Errors**: Domain-specific error types
 //! - **Services**: Domain services for complex business logic
 //! - **Audit**: Negotiation audit logging with μs precision
+//! - **Schema**: Event schema versioning and registry
 
 pub mod audit;
 pub mod entities;
 pub mod errors;
 pub mod events;
 pub mod repositories;
+pub mod schema;
 pub mod services;
 pub mod value_objects;
