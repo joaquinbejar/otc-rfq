@@ -13,8 +13,8 @@
 use crate::domain::events::domain_event::{DomainEvent, EventMetadata, EventType};
 use crate::domain::value_objects::timestamp::Timestamp;
 use crate::domain::value_objects::{
-    Blockchain, CounterpartyId, EventId, Price, Quantity, QuoteId, RfqId, SettlementMethod,
-    TradeId, VenueId,
+    Blockchain, CounterpartyId, EventId, Instrument, OrderSide, Price, Quantity, QuoteId, RfqId,
+    SettlementMethod, TradeId, VenueId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -433,12 +433,97 @@ impl DomainEvent for SettlementFailed {
     }
 }
 
+/// Event emitted when positions are updated after trade execution.
+///
+/// This event notifies the Position Manager to:
+/// 1. Update requester and MM positions
+/// 2. Trigger Greeks recalculation for the instrument
+/// 3. Compute margin impact for both counterparties
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PositionUpdated {
+    /// Event metadata.
+    pub metadata: EventMetadata,
+    /// The trade that triggered the position update.
+    pub trade_id: TradeId,
+    /// Requester position update.
+    pub requester_id: CounterpartyId,
+    /// Requester's side of the trade.
+    pub requester_side: OrderSide,
+    /// Market maker position update (opposite side).
+    pub mm_id: VenueId,
+    /// Market maker's side of the trade.
+    pub mm_side: OrderSide,
+    /// Instrument for Greeks recalculation.
+    pub instrument: Instrument,
+    /// Asset class for efficient Greeks calculation.
+    pub asset_class: crate::domain::value_objects::enums::AssetClass,
+    /// Trade details for position calculation.
+    pub quantity: Quantity,
+    /// Execution price.
+    pub price: Price,
+}
+
+impl PositionUpdated {
+    /// Creates a new `PositionUpdated` event.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        rfq_id: RfqId,
+        trade_id: TradeId,
+        requester_id: CounterpartyId,
+        requester_side: OrderSide,
+        mm_id: VenueId,
+        mm_side: OrderSide,
+        instrument: Instrument,
+        quantity: Quantity,
+        price: Price,
+    ) -> Self {
+        let asset_class = instrument.asset_class();
+        Self {
+            metadata: EventMetadata::for_rfq(rfq_id),
+            trade_id,
+            requester_id,
+            requester_side,
+            mm_id,
+            mm_side,
+            instrument,
+            asset_class,
+            quantity,
+            price,
+        }
+    }
+}
+
+impl DomainEvent for PositionUpdated {
+    fn event_id(&self) -> EventId {
+        self.metadata.event_id
+    }
+
+    fn rfq_id(&self) -> Option<RfqId> {
+        self.metadata.rfq_id
+    }
+
+    fn timestamp(&self) -> Timestamp {
+        self.metadata.timestamp
+    }
+
+    fn event_type(&self) -> EventType {
+        EventType::Trade
+    }
+
+    fn event_name(&self) -> &'static str {
+        "PositionUpdated"
+    }
+}
+
 /// Enum containing all trade and settlement events.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum TradeEvent {
     /// Trade was executed.
     Executed(TradeExecuted),
+    /// Position was updated.
+    PositionUpdated(PositionUpdated),
     /// Settlement was initiated.
     SettlementInitiated(SettlementInitiated),
     /// Settlement was confirmed.
@@ -451,6 +536,7 @@ impl DomainEvent for TradeEvent {
     fn event_id(&self) -> EventId {
         match self {
             Self::Executed(e) => e.event_id(),
+            Self::PositionUpdated(e) => e.event_id(),
             Self::SettlementInitiated(e) => e.event_id(),
             Self::SettlementConfirmed(e) => e.event_id(),
             Self::SettlementFailed(e) => e.event_id(),
@@ -460,6 +546,7 @@ impl DomainEvent for TradeEvent {
     fn rfq_id(&self) -> Option<RfqId> {
         match self {
             Self::Executed(e) => e.rfq_id(),
+            Self::PositionUpdated(e) => e.rfq_id(),
             Self::SettlementInitiated(e) => e.rfq_id(),
             Self::SettlementConfirmed(e) => e.rfq_id(),
             Self::SettlementFailed(e) => e.rfq_id(),
@@ -469,6 +556,7 @@ impl DomainEvent for TradeEvent {
     fn timestamp(&self) -> Timestamp {
         match self {
             Self::Executed(e) => e.timestamp(),
+            Self::PositionUpdated(e) => e.timestamp(),
             Self::SettlementInitiated(e) => e.timestamp(),
             Self::SettlementConfirmed(e) => e.timestamp(),
             Self::SettlementFailed(e) => e.timestamp(),
@@ -478,6 +566,7 @@ impl DomainEvent for TradeEvent {
     fn event_type(&self) -> EventType {
         match self {
             Self::Executed(e) => e.event_type(),
+            Self::PositionUpdated(e) => e.event_type(),
             Self::SettlementInitiated(e) => e.event_type(),
             Self::SettlementConfirmed(e) => e.event_type(),
             Self::SettlementFailed(e) => e.event_type(),
@@ -487,6 +576,7 @@ impl DomainEvent for TradeEvent {
     fn event_name(&self) -> &'static str {
         match self {
             Self::Executed(e) => e.event_name(),
+            Self::PositionUpdated(e) => e.event_name(),
             Self::SettlementInitiated(e) => e.event_name(),
             Self::SettlementConfirmed(e) => e.event_name(),
             Self::SettlementFailed(e) => e.event_name(),
@@ -692,6 +782,8 @@ mod tests {
 
     mod trade_event_enum {
         use super::*;
+        use crate::domain::value_objects::enums::AssetClass;
+        use crate::domain::value_objects::symbol::Symbol;
 
         #[test]
         fn serde_roundtrip() {
@@ -708,6 +800,30 @@ mod tests {
         }
 
         #[test]
+        fn serde_roundtrip_position_updated() {
+            let event = TradeEvent::PositionUpdated(PositionUpdated::new(
+                test_rfq_id(),
+                test_trade_id(),
+                test_counterparty_id(),
+                OrderSide::Buy,
+                test_venue_id(),
+                OrderSide::Sell,
+                Instrument::new(
+                    Symbol::new("BTC/USD").unwrap(),
+                    AssetClass::CryptoSpot,
+                    SettlementMethod::OffChain,
+                ),
+                Quantity::new(1.0).unwrap(),
+                Price::new(50000.0).unwrap(),
+            ));
+
+            let json = serde_json::to_string(&event).unwrap();
+            let deserialized: TradeEvent = serde_json::from_str(&json).unwrap();
+            assert_eq!(event.event_name(), deserialized.event_name());
+            assert_eq!(event.event_type(), EventType::Trade);
+        }
+
+        #[test]
         fn domain_event_trait() {
             let event = TradeEvent::SettlementFailed(SettlementFailed::new(
                 test_rfq_id(),
@@ -718,6 +834,94 @@ mod tests {
 
             assert_eq!(event.event_name(), "SettlementFailed");
             assert_eq!(event.event_type(), EventType::Settlement);
+        }
+    }
+
+    mod position_updated {
+        use super::*;
+        use crate::domain::value_objects::enums::AssetClass;
+        use crate::domain::value_objects::symbol::Symbol;
+
+        #[test]
+        fn creates_event() {
+            let rfq_id = test_rfq_id();
+            let trade_id = test_trade_id();
+            let requester_id = test_counterparty_id();
+            let mm_id = test_venue_id();
+            let instrument = Instrument::new(
+                Symbol::new("BTC/USD").unwrap(),
+                AssetClass::CryptoSpot,
+                SettlementMethod::OffChain,
+            );
+
+            let event = PositionUpdated::new(
+                rfq_id,
+                trade_id,
+                requester_id.clone(),
+                OrderSide::Buy,
+                mm_id.clone(),
+                OrderSide::Sell,
+                instrument.clone(),
+                Quantity::new(1.0).unwrap(),
+                Price::new(50000.0).unwrap(),
+            );
+
+            assert_eq!(event.rfq_id(), Some(rfq_id));
+            assert_eq!(event.trade_id, trade_id);
+            assert_eq!(event.requester_id, requester_id);
+            assert_eq!(event.requester_side, OrderSide::Buy);
+            assert_eq!(event.mm_id, mm_id);
+            assert_eq!(event.mm_side, OrderSide::Sell);
+            assert_eq!(event.instrument, instrument);
+            assert_eq!(event.event_name(), "PositionUpdated");
+            assert_eq!(event.event_type(), EventType::Trade);
+        }
+
+        #[test]
+        fn serde_roundtrip() {
+            let event = PositionUpdated::new(
+                test_rfq_id(),
+                test_trade_id(),
+                test_counterparty_id(),
+                OrderSide::Buy,
+                test_venue_id(),
+                OrderSide::Sell,
+                Instrument::new(
+                    Symbol::new("ETH/USD").unwrap(),
+                    AssetClass::CryptoSpot,
+                    SettlementMethod::OffChain,
+                ),
+                Quantity::new(10.0).unwrap(),
+                Price::new(3000.0).unwrap(),
+            );
+
+            let json = serde_json::to_string(&event).unwrap();
+            let deserialized: PositionUpdated = serde_json::from_str(&json).unwrap();
+            assert_eq!(event.trade_id, deserialized.trade_id);
+            assert_eq!(event.requester_id, deserialized.requester_id);
+            assert_eq!(event.mm_id, deserialized.mm_id);
+        }
+
+        #[test]
+        fn opposite_sides() {
+            let event = PositionUpdated::new(
+                test_rfq_id(),
+                test_trade_id(),
+                test_counterparty_id(),
+                OrderSide::Sell,
+                test_venue_id(),
+                OrderSide::Buy,
+                Instrument::new(
+                    Symbol::new("BTC/USD").unwrap(),
+                    AssetClass::CryptoSpot,
+                    SettlementMethod::OffChain,
+                ),
+                Quantity::new(1.0).unwrap(),
+                Price::new(50000.0).unwrap(),
+            );
+
+            assert_eq!(event.requester_side, OrderSide::Sell);
+            assert_eq!(event.mm_side, OrderSide::Buy);
         }
     }
 }

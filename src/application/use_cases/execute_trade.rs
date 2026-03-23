@@ -44,6 +44,19 @@ pub trait TradeEventPublisher: Send + Sync + fmt::Debug {
         quote_id: QuoteId,
         reason: &str,
     ) -> ApplicationResult<()>;
+
+    /// Publishes a position updated event.
+    ///
+    /// This event notifies the Position Manager to update positions,
+    /// trigger Greeks recalculation, and compute margin impact.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the event cannot be published.
+    async fn publish_position_updated(
+        &self,
+        event: crate::domain::events::PositionUpdated,
+    ) -> ApplicationResult<()>;
 }
 
 /// Request to execute a trade.
@@ -227,7 +240,7 @@ impl ExecuteTradeUseCase {
             .await
             .map_err(ApplicationError::RepositoryError)?;
 
-        // Publish event
+        // Publish trade executed event
         let event = TradeExecuted::builder()
             .rfq_id(rfq.id())
             .trade_id(trade.id())
@@ -240,6 +253,22 @@ impl ExecuteTradeUseCase {
             .build();
         self.event_publisher
             .publish_trade_executed(event.clone())
+            .await?;
+
+        // Publish position update event (Position Manager will handle Greeks + margin)
+        let position_event = crate::domain::events::PositionUpdated::new(
+            rfq.id(),
+            trade.id(),
+            rfq.client_id().clone(),
+            rfq.side(),
+            quote.venue_id().clone(),
+            rfq.side().opposite(),
+            rfq.instrument().clone(),
+            trade.quantity(),
+            trade.price(),
+        );
+        self.event_publisher
+            .publish_position_updated(position_event)
             .await?;
 
         // Send multi-channel trade confirmations (non-blocking)
@@ -447,6 +476,17 @@ mod tests {
     #[derive(Debug, Default)]
     struct MockTradeEventPublisher {
         events: Mutex<Vec<TradeExecuted>>,
+        position_events: Mutex<Vec<crate::domain::events::PositionUpdated>>,
+    }
+
+    impl MockTradeEventPublisher {
+        fn position_event_count(&self) -> usize {
+            self.position_events.lock().unwrap().len()
+        }
+
+        fn last_position_event(&self) -> Option<crate::domain::events::PositionUpdated> {
+            self.position_events.lock().unwrap().last().cloned()
+        }
     }
 
     #[async_trait]
@@ -462,6 +502,14 @@ mod tests {
             _quote_id: QuoteId,
             _reason: &str,
         ) -> ApplicationResult<()> {
+            Ok(())
+        }
+
+        async fn publish_position_updated(
+            &self,
+            event: crate::domain::events::PositionUpdated,
+        ) -> ApplicationResult<()> {
+            self.position_events.lock().unwrap().push(event);
             Ok(())
         }
     }
@@ -606,12 +654,18 @@ mod tests {
         let (rfq, quote) = create_test_rfq_with_quote();
         let rfq_id = rfq.id();
         let quote_id = quote.id();
+        let client_id = rfq.client_id().clone();
+        let venue_id = quote.venue_id().clone();
+        let instrument = rfq.instrument().clone();
+        let side = rfq.side();
 
         let venue_adapter = Arc::new(MockVenueAdapter::successful("venue-1", quote_id));
-        let use_case = create_use_case(
-            MockRfqRepository::with_rfq(rfq),
-            MockTradeRepository::default(),
-            MockVenueRegistry::with_venue(venue_adapter),
+        let event_publisher = Arc::new(MockTradeEventPublisher::default());
+        let use_case = ExecuteTradeUseCase::new(
+            Arc::new(MockRfqRepository::with_rfq(rfq)),
+            Arc::new(MockTradeRepository::default()),
+            Arc::clone(&event_publisher) as Arc<dyn TradeEventPublisher>,
+            Arc::new(MockVenueRegistry::with_venue(venue_adapter)),
         );
 
         let request = ExecuteTradeRequest::new(rfq_id, quote_id);
@@ -621,6 +675,18 @@ mod tests {
         let response = result.unwrap();
         assert_eq!(response.rfq_id, rfq_id);
         assert!(response.execution_time_ms < 1000);
+
+        // Verify PositionUpdated event was published
+        assert_eq!(event_publisher.position_event_count(), 1);
+        let position_event = event_publisher.last_position_event().unwrap();
+        assert_eq!(position_event.trade_id, response.trade.id());
+        assert_eq!(position_event.requester_id, client_id);
+        assert_eq!(position_event.requester_side, side);
+        assert_eq!(position_event.mm_id, venue_id);
+        assert_eq!(position_event.mm_side, side.opposite());
+        assert_eq!(position_event.instrument, instrument);
+        assert_eq!(position_event.quantity, response.trade.quantity());
+        assert_eq!(position_event.price, response.trade.price());
     }
 
     #[tokio::test]

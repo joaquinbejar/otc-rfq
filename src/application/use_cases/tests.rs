@@ -501,6 +501,13 @@ impl TradeEventPublisher for MockTradeEventPublisher {
             .push((rfq_id, quote_id, reason.to_string()));
         Ok(())
     }
+
+    async fn publish_position_updated(
+        &self,
+        _event: crate::domain::events::PositionUpdated,
+    ) -> ApplicationResult<()> {
+        Ok(())
+    }
 }
 
 // ============================================================================

@@ -114,7 +114,8 @@ pub use rfq_events::{
     RfqEvent, RfqExpired,
 };
 pub use trade_events::{
-    SettlementConfirmed, SettlementFailed, SettlementInitiated, TradeEvent, TradeExecuted,
+    PositionUpdated, SettlementConfirmed, SettlementFailed, SettlementInitiated, TradeEvent,
+    TradeExecuted,
 };
 
 pub use anonymity_events::{AnonymousRfqBroadcast, IdentityRevealed};
