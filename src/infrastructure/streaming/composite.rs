@@ -594,6 +594,8 @@ mod tests {
         assert_eq!(service.total_active_quotes(), 0);
         let instrument = create_test_instrument();
         assert!(service.best_quote(&instrument).is_none());
+        assert!(service.active_quotes(&instrument).is_empty());
+        assert!(service.mm_quote(&instrument, &mm_id).is_none());
 
         // Background cleanup will eventually purge the internal book (implementation detail)
         service.remove_stale_quotes().await;
