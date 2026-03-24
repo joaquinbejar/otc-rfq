@@ -125,11 +125,14 @@ impl InstrumentBook {
         is_best_bid || is_best_ask
     }
 
-    fn remove_stale(&mut self) -> usize {
+    fn remove_stale(
+        &mut self,
+        registered_mms: &std::collections::HashSet<CounterpartyId>,
+    ) -> usize {
         let stale_mms: Vec<_> = self
             .quotes
             .iter()
-            .filter(|(_, q)| q.is_stale())
+            .filter(|(id, q)| q.is_stale() || !registered_mms.contains(id))
             .map(|(id, _)| id.clone())
             .collect();
 
@@ -381,10 +384,8 @@ impl StreamingQuoteService for CompositeStreamingQuoteService {
 
     fn unregister_mm(&self, mm_id: &CounterpartyId) {
         self.registered_mms.remove(mm_id);
-        for mut book in self.books.iter_mut() {
-            book.quotes.remove(mm_id);
-            book.recalculate_best();
-        }
+        // Note: Surgical cleanup of the order books is deferred to the background
+        // staleness checker to avoid O(N) iteration and global lock contention.
     }
 
     fn config(&self) -> &StreamingQuoteConfig {
@@ -401,8 +402,14 @@ impl StreamingQuoteService for CompositeStreamingQuoteService {
 
     async fn remove_stale_quotes(&self) -> usize {
         let mut total = 0;
+        let registered: std::collections::HashSet<_> = self
+            .registered_mms
+            .iter()
+            .map(|kv| kv.key().clone())
+            .collect();
+
         for mut book in self.books.iter_mut() {
-            total += book.remove_stale();
+            total += book.remove_stale(&registered);
         }
 
         let mut stats = self.stats.write().await;
@@ -517,9 +524,43 @@ mod tests {
         service.receive_quote(quote).await;
 
         assert_eq!(service.total_active_quotes(), 1);
-
         service.unregister_mm(&mm_id);
         assert!(!service.is_mm_registered(&mm_id));
+        // Quotes are still there until background cleanup
+        assert_eq!(service.total_active_quotes(), 1);
+
+        service.remove_stale_quotes().await;
+        assert_eq!(service.total_active_quotes(), 0);
+    }
+
+    #[tokio::test]
+    async fn unregister_removes_multiple_instruments() {
+        let service = CompositeStreamingQuoteService::with_defaults();
+        let mm_id = CounterpartyId::new("mm-1");
+        service.register_mm(mm_id.clone());
+
+        let symbol1 = Symbol::new("BTC/USD").unwrap();
+        let instr1 = Instrument::new(symbol1, AssetClass::CryptoSpot, SettlementMethod::default());
+
+        let symbol2 = Symbol::new("ETH/USD").unwrap();
+        let instr2 = Instrument::new(symbol2, AssetClass::CryptoSpot, SettlementMethod::default());
+
+        let bid =
+            PriceLevel::new(Price::new(50000.0).unwrap(), Quantity::new(1.0).unwrap()).unwrap();
+        let ask =
+            PriceLevel::new(Price::new(50010.0).unwrap(), Quantity::new(1.0).unwrap()).unwrap();
+
+        let quote1 = StreamingQuote::new(mm_id.clone(), instr1, bid, ask, 5000).unwrap();
+        let quote2 = StreamingQuote::new(mm_id.clone(), instr2, bid, ask, 5000).unwrap();
+
+        service.receive_quote(quote1).await;
+        service.receive_quote(quote2).await;
+
+        assert_eq!(service.total_active_quotes(), 2);
+
+        service.unregister_mm(&mm_id);
+        service.remove_stale_quotes().await;
+
         assert_eq!(service.total_active_quotes(), 0);
     }
 
