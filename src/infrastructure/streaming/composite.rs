@@ -627,7 +627,10 @@ mod tests {
         let best_fallback = service.best_quote(&instrument).unwrap();
         assert_eq!(best_fallback.bid_mm(), &mm2);
         assert_eq!(best_fallback.ask_mm(), &mm2);
-        assert_eq!(best_fallback.bid().price().get(), Price::new(49990.0).unwrap().get());
+        assert_eq!(
+            best_fallback.bid().price().get(),
+            Price::new(49990.0).unwrap().get()
+        );
     }
 
     #[tokio::test]
