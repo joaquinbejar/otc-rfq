@@ -91,36 +91,6 @@ fn decode_order_side(value: u8) -> SbeResult<OrderSide> {
     }
 }
 
-/// Encodes [`Blockchain`] to its SBE byte tag.
-#[inline]
-#[must_use]
-fn encode_blockchain(chain: Blockchain) -> u8 {
-    match chain {
-        Blockchain::Ethereum => 0,
-        Blockchain::Polygon => 1,
-        Blockchain::Arbitrum => 2,
-        Blockchain::Optimism => 3,
-        Blockchain::Base => 4,
-    }
-}
-
-/// Decodes [`Blockchain`] from its SBE byte tag.
-///
-/// # Errors
-///
-/// Returns [`SbeError::InvalidEnumValue`] if the byte is not a known blockchain tag.
-#[inline]
-fn decode_blockchain(value: u8) -> SbeResult<Blockchain> {
-    match value {
-        0 => Ok(Blockchain::Ethereum),
-        1 => Ok(Blockchain::Polygon),
-        2 => Ok(Blockchain::Arbitrum),
-        3 => Ok(Blockchain::Optimism),
-        4 => Ok(Blockchain::Base),
-        _ => Err(SbeError::InvalidEnumValue(value)),
-    }
-}
-
 /// Encodes [`SettlementMethod`] to two SBE bytes: `method_tag` + `blockchain_tag`.
 ///
 /// Wire layout: `[method(1B)][blockchain(1B)]`
@@ -131,7 +101,7 @@ fn decode_blockchain(value: u8) -> SbeResult<Blockchain> {
 fn encode_settlement_method(method: SettlementMethod) -> [u8; 2] {
     match method {
         SettlementMethod::OffChain => [0, 0],
-        SettlementMethod::OnChain(chain) => [1, encode_blockchain(chain)],
+        SettlementMethod::OnChain(chain) => [1, chain.as_u8()],
     }
 }
 
@@ -145,7 +115,9 @@ fn encode_settlement_method(method: SettlementMethod) -> [u8; 2] {
 fn decode_settlement_method(buffer: &[u8; 2]) -> SbeResult<SettlementMethod> {
     match buffer[0] {
         0 => Ok(SettlementMethod::OffChain),
-        1 => Ok(SettlementMethod::OnChain(decode_blockchain(buffer[1])?)),
+        1 => Blockchain::from_u8(buffer[1])
+            .map(SettlementMethod::OnChain)
+            .ok_or(SbeError::InvalidEnumValue(buffer[1])),
         _ => Err(SbeError::InvalidEnumValue(buffer[0])),
     }
 }
