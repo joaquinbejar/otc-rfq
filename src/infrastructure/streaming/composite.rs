@@ -184,7 +184,6 @@ impl InstrumentBook {
             _ => None,
         }
     }
-
 }
 
 /// Composite streaming quote service that aggregates quotes from all MMs.
