@@ -9,7 +9,7 @@
 use crate::domain::value_objects::enums::ParseEnumError;
 use crate::domain::value_objects::timestamp::Timestamp;
 use crate::domain::value_objects::{
-    CounterpartyId, Price, Quantity, RfqId, SettlementMethod, TradeId,
+    CounterpartyId, Price, Quantity, RfqId, SettlementMethod, TradeId, VenueId,
 };
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -96,6 +96,59 @@ impl FromStr for ConfirmationChannel {
     }
 }
 
+/// A participant in a trade.
+///
+/// Represents either a counterparty (client) or a venue (market maker)
+/// involved in a trade execution.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "type", content = "id")]
+pub enum TradeParticipant {
+    /// A counterparty (client or institutional trader).
+    Counterparty(CounterpartyId),
+    /// A venue (market maker or liquidity provider).
+    Venue(VenueId),
+}
+
+impl TradeParticipant {
+    /// Returns the counterparty ID if this is a counterparty participant.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use otc_rfq::domain::value_objects::{TradeParticipant, CounterpartyId};
+    ///
+    /// let participant = TradeParticipant::Counterparty(CounterpartyId::new("client-1"));
+    /// assert!(participant.as_counterparty().is_some());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn as_counterparty(&self) -> Option<&CounterpartyId> {
+        match self {
+            Self::Counterparty(id) => Some(id),
+            Self::Venue(_) => None,
+        }
+    }
+
+    /// Returns the venue ID if this is a venue participant.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use otc_rfq::domain::value_objects::{TradeParticipant, VenueId};
+    ///
+    /// let participant = TradeParticipant::Venue(VenueId::new("venue-1"));
+    /// assert!(participant.as_venue().is_some());
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn as_venue(&self) -> Option<&VenueId> {
+        match self {
+            Self::Counterparty(_) => None,
+            Self::Venue(id) => Some(id),
+        }
+    }
+}
+
 /// Trade confirmation data.
 ///
 /// Contains all information needed to notify counterparties about
@@ -118,10 +171,10 @@ pub struct TradeConfirmation {
     pub net_fee: Decimal,
     /// Settlement method.
     pub settlement_method: SettlementMethod,
-    /// Buyer counterparty ID.
-    pub buyer_id: CounterpartyId,
-    /// Seller counterparty ID.
-    pub seller_id: CounterpartyId,
+    /// Buyer participant (counterparty or venue).
+    pub buyer: TradeParticipant,
+    /// Seller participant (counterparty or venue).
+    pub seller: TradeParticipant,
     /// Confirmation timestamp.
     pub timestamp: Timestamp,
 }
@@ -129,7 +182,6 @@ pub struct TradeConfirmation {
 impl TradeConfirmation {
     /// Creates a new trade confirmation.
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         trade_id: TradeId,
         rfq_id: RfqId,
@@ -139,8 +191,8 @@ impl TradeConfirmation {
         maker_fee: Decimal,
         net_fee: Decimal,
         settlement_method: SettlementMethod,
-        buyer_id: CounterpartyId,
-        seller_id: CounterpartyId,
+        buyer: TradeParticipant,
+        seller: TradeParticipant,
     ) -> Self {
         Self {
             trade_id,
@@ -151,8 +203,8 @@ impl TradeConfirmation {
             maker_fee,
             net_fee,
             settlement_method,
-            buyer_id,
-            seller_id,
+            buyer,
+            seller,
             timestamp: Timestamp::now(),
         }
     }
@@ -213,18 +265,18 @@ impl TradeConfirmation {
         self.settlement_method
     }
 
-    /// Returns the buyer ID.
+    /// Returns the buyer participant.
     #[inline]
     #[must_use]
-    pub fn buyer_id(&self) -> &CounterpartyId {
-        &self.buyer_id
+    pub fn buyer(&self) -> &TradeParticipant {
+        &self.buyer
     }
 
-    /// Returns the seller ID.
+    /// Returns the seller participant.
     #[inline]
     #[must_use]
-    pub fn seller_id(&self) -> &CounterpartyId {
-        &self.seller_id
+    pub fn seller(&self) -> &TradeParticipant {
+        &self.seller
     }
 
     /// Returns the timestamp.
@@ -440,8 +492,8 @@ mod tests {
             Decimal::new(5, 0),
             Decimal::new(15, 0),
             SettlementMethod::OnChain(Blockchain::Ethereum),
-            buyer_id.clone(),
-            seller_id.clone(),
+            TradeParticipant::Counterparty(buyer_id.clone()),
+            TradeParticipant::Counterparty(seller_id.clone()),
         );
 
         assert_eq!(confirmation.trade_id(), trade_id);
@@ -451,8 +503,8 @@ mod tests {
         assert_eq!(confirmation.taker_fee(), Decimal::new(10, 0));
         assert_eq!(confirmation.maker_fee(), Decimal::new(5, 0));
         assert_eq!(confirmation.net_fee(), Decimal::new(15, 0));
-        assert_eq!(confirmation.buyer_id(), &buyer_id);
-        assert_eq!(confirmation.seller_id(), &seller_id);
+        assert_eq!(confirmation.buyer().as_counterparty(), Some(&buyer_id));
+        assert_eq!(confirmation.seller().as_counterparty(), Some(&seller_id));
     }
 
     #[test]

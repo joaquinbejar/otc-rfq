@@ -11,7 +11,7 @@ use crate::application::use_cases::create_rfq::RfqRepository;
 use crate::domain::entities::rfq::Rfq;
 use crate::domain::entities::trade::Trade;
 use crate::domain::events::TradeExecuted;
-use crate::domain::value_objects::{QuoteId, RfqId, TradeId};
+use crate::domain::value_objects::{QuoteId, RfqId, TradeId, TradeParticipant};
 use crate::infrastructure::venues::traits::ExecutionResult;
 use async_trait::async_trait;
 use std::fmt;
@@ -357,15 +357,16 @@ impl ExecuteTradeUseCase {
         };
 
         // Determine buyer and seller based on RFQ side
-        // Note: In the current implementation, we use the client as both buyer and seller
-        // because the venue is not modeled as a CounterpartyId. In a production system,
-        // we would need to:
-        // 1. Model venues as counterparties, OR
-        // 2. Track the actual counterparty on the other side of the trade, OR
-        // 3. Extend TradeConfirmation to support VenueId as a separate concept
-        let (buyer_id, seller_id) = match rfq.side() {
-            OrderSide::Buy => (counterparty_id.clone(), counterparty_id.clone()),
-            OrderSide::Sell => (counterparty_id.clone(), counterparty_id.clone()),
+        // Client is the requester, venue is the liquidity provider
+        let (buyer, seller) = match rfq.side() {
+            OrderSide::Buy => (
+                TradeParticipant::Counterparty(counterparty_id.clone()),
+                TradeParticipant::Venue(event.venue_id.clone()),
+            ),
+            OrderSide::Sell => (
+                TradeParticipant::Venue(event.venue_id.clone()),
+                TradeParticipant::Counterparty(counterparty_id.clone()),
+            ),
         };
 
         // Build trade confirmation
@@ -378,8 +379,8 @@ impl ExecuteTradeUseCase {
             event.maker_fee.unwrap_or_default(),
             event.net_fee.unwrap_or_default(),
             event.settlement_method,
-            buyer_id,
-            seller_id,
+            buyer,
+            seller,
         );
 
         // Send confirmation (async, non-blocking)

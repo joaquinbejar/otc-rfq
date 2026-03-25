@@ -124,53 +124,43 @@ impl ConfirmationChannelAdapter for GrpcConfirmationAdapter {
                 reason: "Expected Grpc destination".to_string(),
             });
         }
-        // Get streams for both buyer and seller
-        let buyer_streams = self.client_registry.get_streams(confirmation.buyer_id());
-        let seller_streams = self.client_registry.get_streams(confirmation.seller_id());
+        // Extract counterparty IDs from participants (only counterparties get notifications)
+        let mut counterparty_ids = Vec::new();
+        if let Some(id) = confirmation.buyer().as_counterparty() {
+            counterparty_ids.push(id);
+        }
+        if let Some(id) = confirmation.seller().as_counterparty() {
+            counterparty_ids.push(id);
+        }
 
-        if buyer_streams.is_empty() && seller_streams.is_empty() {
+        if counterparty_ids.is_empty() {
             return Err(DomainError::ConfirmationFailed {
                 channel: "GRPC".to_string(),
-                reason: "No active gRPC streams found for counterparties".to_string(),
+                reason: "No counterparties found in trade participants".to_string(),
             });
         }
 
         let mut errors = Vec::new();
         let mut sent_count = 0;
 
-        // Send to buyer streams
-        for stream in &buyer_streams {
-            if stream.is_active() {
-                match stream.send_confirmation(confirmation).await {
-                    Ok(()) => {
-                        sent_count += 1;
-                        tracing::debug!(
-                            trade_id = %confirmation.trade_id(),
-                            counterparty = %confirmation.buyer_id(),
-                            "gRPC confirmation sent to buyer"
-                        );
-                    }
-                    Err(e) => {
-                        errors.push(format!("Buyer stream error: {}", e));
-                    }
-                }
-            }
-        }
-
-        // Send to seller streams
-        for stream in &seller_streams {
-            if stream.is_active() {
-                match stream.send_confirmation(confirmation).await {
-                    Ok(()) => {
-                        sent_count += 1;
-                        tracing::debug!(
-                            trade_id = %confirmation.trade_id(),
-                            counterparty = %confirmation.seller_id(),
-                            "gRPC confirmation sent to seller"
-                        );
-                    }
-                    Err(e) => {
-                        errors.push(format!("Seller stream error: {}", e));
+        // Send to all counterparties (venues don't receive gRPC notifications)
+        for counterparty_id in counterparty_ids {
+            let streams = self.client_registry.get_streams(counterparty_id);
+            
+            for stream in &streams {
+                if stream.is_active() {
+                    match stream.send_confirmation(confirmation).await {
+                        Ok(()) => {
+                            sent_count += 1;
+                            tracing::debug!(
+                                trade_id = %confirmation.trade_id(),
+                                counterparty = %counterparty_id,
+                                "gRPC confirmation sent to counterparty"
+                            );
+                        }
+                        Err(e) => {
+                            errors.push(format!("Stream error for {}: {}", counterparty_id, e));
+                        }
                     }
                 }
             }
@@ -253,8 +243,8 @@ mod tests {
             Decimal::new(5, 0),
             Decimal::new(15, 0),
             SettlementMethod::OnChain(Blockchain::Ethereum),
-            CounterpartyId::new("buyer-1"),
-            CounterpartyId::new("seller-1"),
+            TradeParticipant::Counterparty(CounterpartyId::new("buyer-1")),
+            TradeParticipant::Counterparty(CounterpartyId::new("seller-1")),
         )
     }
 
