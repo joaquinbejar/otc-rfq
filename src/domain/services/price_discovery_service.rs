@@ -8,7 +8,19 @@ use crate::domain::services::TheoreticalPricer;
 use crate::domain::value_objects::{
     Instrument, Price, PriceDiscoveryMethod, Quantity, RfqId, TheoreticalPrice,
 };
+use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
+
+/// Helper functions for default liquidity thresholds.
+#[inline]
+fn default_min_clob_depth() -> Decimal {
+    Decimal::new(10_000, 0)
+}
+
+#[inline]
+fn default_min_recent_volume() -> Decimal {
+    Decimal::new(5_000, 0)
+}
 
 /// Configuration for price discovery service.
 #[derive(Debug, Clone)]
@@ -25,15 +37,16 @@ pub struct PriceDiscoveryConfig {
 
 impl Default for PriceDiscoveryConfig {
     fn default() -> Self {
-        use rust_decimal::Decimal;
-
         Self {
-            // SAFETY: Decimal::new with valid constants is infallible
+            // SAFETY: `Quantity::from_decimal` only fails if the provided `Decimal`
+            // violates its validation rules (for example, an unsupported scale or
+            // an out-of-range / invalid value). The helper functions return
+            // non-negative Decimals with scale `0`, so these calls are expected to succeed.
             #[allow(clippy::unwrap_used)]
-            min_clob_depth: Quantity::from_decimal(Decimal::new(10_000, 0)).unwrap(),
+            min_clob_depth: Quantity::from_decimal(default_min_clob_depth()).unwrap(),
             max_spread_ratio: 0.02, // 2%
             #[allow(clippy::unwrap_used)]
-            min_recent_volume: Quantity::from_decimal(Decimal::new(5_000, 0)).unwrap(),
+            min_recent_volume: Quantity::from_decimal(default_min_recent_volume()).unwrap(),
             theoretical_spread_multiplier: 1.5,
         }
     }
@@ -264,6 +277,10 @@ mod tests {
         Instrument::new(symbol, AssetClass::CryptoDerivs, SettlementMethod::OffChain)
     }
 
+    fn test_quantity(value: i64) -> Quantity {
+        Quantity::from_decimal(Decimal::new(value, 0)).unwrap()
+    }
+
     #[test]
     fn select_method_liquid_instrument() {
         let service = PriceDiscoveryService::default();
@@ -271,10 +288,10 @@ mod tests {
         let instrument = create_test_instrument();
 
         let metrics = LiquidityMetrics::new(
-            Quantity::new(15_000.0).unwrap(), // Good depth
-            0.01,                             // 1% spread
-            Quantity::new(10_000.0).unwrap(), // Good volume
-            5,                                // 5 MMs
+            test_quantity(15_000), // Good depth
+            0.01,                  // 1% spread
+            test_quantity(10_000), // Good volume
+            5,                     // 5 MMs
         );
 
         let (method, event) = service.select_method(rfq_id, &instrument, &metrics);
@@ -291,10 +308,10 @@ mod tests {
         let instrument = create_test_instrument();
 
         let metrics = LiquidityMetrics::new(
-            Quantity::new(1_000.0).unwrap(), // Low depth
-            0.05,                            // Wide spread
-            Quantity::new(500.0).unwrap(),   // Low volume
-            3,                               // But 3 MMs available
+            test_quantity(1_000), // Low depth
+            0.05,                 // Wide spread
+            test_quantity(500),   // Low volume
+            3,                    // But 3 MMs available
         );
 
         let (method, _) = service.select_method(rfq_id, &instrument, &metrics);
@@ -309,10 +326,10 @@ mod tests {
         let instrument = create_test_instrument();
 
         let metrics = LiquidityMetrics::new(
-            Quantity::new(1_000.0).unwrap(), // Low depth
-            0.05,                            // Wide spread
-            Quantity::new(500.0).unwrap(),   // Low volume
-            1,                               // Only 1 MM
+            test_quantity(1_000), // Low depth
+            0.05,                 // Wide spread
+            test_quantity(500),   // Low volume
+            1,                    // Only 1 MM
         );
 
         let (method, _) = service.select_method(rfq_id, &instrument, &metrics);
@@ -327,10 +344,10 @@ mod tests {
         let instrument = create_test_instrument();
 
         let metrics = LiquidityMetrics::new(
-            Quantity::new(0.0).unwrap(), // No depth
-            1.0,                         // Very wide spread
-            Quantity::new(0.0).unwrap(), // No volume
-            0,                           // No MMs
+            test_quantity(0), // No depth
+            1.0,              // Very wide spread
+            test_quantity(0), // No volume
+            0,                // No MMs
         );
 
         let (method, event) = service.select_method(rfq_id, &instrument, &metrics);
@@ -407,36 +424,19 @@ mod tests {
     fn liquidity_metrics_is_liquid() {
         let config = PriceDiscoveryConfig::default();
 
-        let liquid = LiquidityMetrics::new(
-            Quantity::new(15_000.0).unwrap(),
-            0.01,
-            Quantity::new(10_000.0).unwrap(),
-            5,
-        );
+        let liquid = LiquidityMetrics::new(test_quantity(15_000), 0.01, test_quantity(10_000), 5);
         assert!(liquid.is_liquid(&config));
 
-        let illiquid_depth = LiquidityMetrics::new(
-            Quantity::new(5_000.0).unwrap(),
-            0.01,
-            Quantity::new(10_000.0).unwrap(),
-            5,
-        );
+        let illiquid_depth =
+            LiquidityMetrics::new(test_quantity(5_000), 0.01, test_quantity(10_000), 5);
         assert!(!illiquid_depth.is_liquid(&config));
 
-        let illiquid_spread = LiquidityMetrics::new(
-            Quantity::new(15_000.0).unwrap(),
-            0.05,
-            Quantity::new(10_000.0).unwrap(),
-            5,
-        );
+        let illiquid_spread =
+            LiquidityMetrics::new(test_quantity(15_000), 0.05, test_quantity(10_000), 5);
         assert!(!illiquid_spread.is_liquid(&config));
 
-        let illiquid_volume = LiquidityMetrics::new(
-            Quantity::new(15_000.0).unwrap(),
-            0.01,
-            Quantity::new(1_000.0).unwrap(),
-            5,
-        );
+        let illiquid_volume =
+            LiquidityMetrics::new(test_quantity(15_000), 0.01, test_quantity(1_000), 5);
         assert!(!illiquid_volume.is_liquid(&config));
     }
 }
