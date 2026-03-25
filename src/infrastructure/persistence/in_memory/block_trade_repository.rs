@@ -3,39 +3,12 @@
 //! In-memory implementation of the block trade repository for testing and development.
 
 use crate::domain::entities::block_trade::{BlockTrade, BlockTradeId};
-use crate::domain::errors::DomainResult;
 use crate::domain::value_objects::CounterpartyId;
+use crate::infrastructure::persistence::traits::{BlockTradeRepository, RepositoryResult};
 use async_trait::async_trait;
 use std::collections::HashMap;
-use std::fmt;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-
-/// Repository trait for block trade persistence.
-///
-/// Provides CRUD operations for block trades.
-#[async_trait]
-pub trait BlockTradeRepository: Send + Sync + fmt::Debug {
-    /// Saves a block trade.
-    ///
-    /// Creates a new record or updates an existing one.
-    async fn save(&self, trade: &BlockTrade) -> DomainResult<()>;
-
-    /// Finds a block trade by ID.
-    async fn find_by_id(&self, id: BlockTradeId) -> DomainResult<Option<BlockTrade>>;
-
-    /// Finds all block trades for a counterparty (as buyer or seller).
-    async fn find_by_counterparty(
-        &self,
-        counterparty_id: &CounterpartyId,
-    ) -> DomainResult<Vec<BlockTrade>>;
-
-    /// Finds all pending block trades (not yet executed or rejected).
-    async fn find_pending(&self) -> DomainResult<Vec<BlockTrade>>;
-
-    /// Deletes a block trade by ID.
-    async fn delete(&self, id: BlockTradeId) -> DomainResult<bool>;
-}
 
 /// In-memory implementation of the block trade repository.
 ///
@@ -69,13 +42,13 @@ impl InMemoryBlockTradeRepository {
 
 #[async_trait]
 impl BlockTradeRepository for InMemoryBlockTradeRepository {
-    async fn save(&self, trade: &BlockTrade) -> DomainResult<()> {
+    async fn save(&self, trade: &BlockTrade) -> RepositoryResult<()> {
         let mut guard = self.trades.write().await;
         guard.insert(trade.id(), trade.clone());
         Ok(())
     }
 
-    async fn find_by_id(&self, id: BlockTradeId) -> DomainResult<Option<BlockTrade>> {
+    async fn find_by_id(&self, id: BlockTradeId) -> RepositoryResult<Option<BlockTrade>> {
         let guard = self.trades.read().await;
         Ok(guard.get(&id).cloned())
     }
@@ -83,7 +56,7 @@ impl BlockTradeRepository for InMemoryBlockTradeRepository {
     async fn find_by_counterparty(
         &self,
         counterparty_id: &CounterpartyId,
-    ) -> DomainResult<Vec<BlockTrade>> {
+    ) -> RepositoryResult<Vec<BlockTrade>> {
         let guard = self.trades.read().await;
         let trades: Vec<BlockTrade> = guard
             .values()
@@ -93,7 +66,7 @@ impl BlockTradeRepository for InMemoryBlockTradeRepository {
         Ok(trades)
     }
 
-    async fn find_pending(&self) -> DomainResult<Vec<BlockTrade>> {
+    async fn find_pending(&self) -> RepositoryResult<Vec<BlockTrade>> {
         let guard = self.trades.read().await;
         let trades: Vec<BlockTrade> = guard
             .values()
@@ -103,7 +76,7 @@ impl BlockTradeRepository for InMemoryBlockTradeRepository {
         Ok(trades)
     }
 
-    async fn delete(&self, id: BlockTradeId) -> DomainResult<bool> {
+    async fn delete(&self, id: BlockTradeId) -> RepositoryResult<bool> {
         let mut guard = self.trades.write().await;
         Ok(guard.remove(&id).is_some())
     }

@@ -12,6 +12,7 @@
 //! - [`TradeRepository`]: Persistence for Trade entities
 //! - [`VenueRepository`]: Persistence for venue configurations
 //! - [`CounterpartyRepository`]: Persistence for counterparty data
+//! - [`BlockTradeRepository`]: Persistence for block trade entities
 //!
 //! # Examples
 //!
@@ -25,6 +26,7 @@
 //! ```
 
 use crate::domain::entities::anonymity::IdentityMapping;
+use crate::domain::entities::block_trade::BlockTrade;
 use crate::domain::entities::counterparty::Counterparty;
 use crate::domain::entities::rfq::Rfq;
 use crate::domain::entities::trade::Trade;
@@ -565,6 +567,51 @@ pub trait IdentityMappingRepository: Send + Sync + fmt::Debug {
 
     /// Counts all identity mappings.
     async fn count(&self) -> RepositoryResult<u64>;
+}
+
+/// Repository for block trade persistence.
+///
+/// Provides CRUD operations for pre-arranged bilateral block trades.
+///
+/// # Examples
+///
+/// ```ignore
+/// use otc_rfq::infrastructure::persistence::traits::BlockTradeRepository;
+///
+/// async fn save_block_trade(repo: &impl BlockTradeRepository, trade: &BlockTrade) {
+///     repo.save(trade).await.unwrap();
+/// }
+/// ```
+#[async_trait]
+pub trait BlockTradeRepository: Send + Sync + fmt::Debug {
+    /// Saves a block trade.
+    ///
+    /// Creates a new record or updates an existing one.
+    async fn save(&self, trade: &BlockTrade) -> RepositoryResult<()>;
+
+    /// Finds a block trade by ID.
+    ///
+    /// Returns `None` if the block trade does not exist.
+    async fn find_by_id(&self, id: BlockTradeId) -> RepositoryResult<Option<BlockTrade>>;
+
+    /// Finds all block trades for a counterparty (as buyer or seller).
+    ///
+    /// Returns all block trades where the specified counterparty is either
+    /// the buyer or the seller.
+    async fn find_by_counterparty(
+        &self,
+        counterparty_id: &CounterpartyId,
+    ) -> RepositoryResult<Vec<BlockTrade>>;
+
+    /// Finds all pending block trades (not yet executed, rejected, or failed).
+    ///
+    /// Returns all block trades in non-terminal states.
+    async fn find_pending(&self) -> RepositoryResult<Vec<BlockTrade>>;
+
+    /// Deletes a block trade by ID.
+    ///
+    /// Returns `Ok(true)` if the block trade was deleted, `Ok(false)` if it didn't exist.
+    async fn delete(&self, id: BlockTradeId) -> RepositoryResult<bool>;
 }
 
 #[cfg(test)]

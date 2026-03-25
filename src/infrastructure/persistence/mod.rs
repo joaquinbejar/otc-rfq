@@ -8,6 +8,7 @@
 //! - [`TradeRepository`]: Persistence for Trade entities
 //! - [`VenueRepository`]: Persistence for venue configurations
 //! - [`CounterpartyRepository`]: Persistence for counterparty data
+//! - [`BlockTradeRepository`]: Persistence for block trade entities
 //! - [`EventStore`]: Append-only event storage
 //! - [`NegotiationAuditLog`]: Negotiation audit log with μs precision
 //!
@@ -25,6 +26,6 @@ pub mod traits;
 pub use audit_log::{AuditLogResult, NegotiationAuditLog};
 pub use event_store::{EventStore, EventStoreError, EventStoreResult, StoredEvent};
 pub use traits::{
-    CounterpartyRepository, RepositoryError, RepositoryResult, RfqRepository, TradeRepository,
-    VenueRepository,
+    BlockTradeRepository, CounterpartyRepository, RepositoryError, RepositoryResult, RfqRepository,
+    TradeRepository, VenueRepository,
 };
