@@ -140,10 +140,12 @@ impl ConfirmationChannelAdapter for GrpcConfirmationAdapter {
 
         let mut errors = Vec::new();
         let mut sent_count = 0;
+        let mut total_streams = 0;
 
         // Send to all counterparties (venues don't receive gRPC notifications)
         for counterparty_id in counterparty_ids {
             let streams = self.client_registry.get_streams(counterparty_id).await;
+            total_streams += streams.len();
 
             for stream in &streams {
                 if stream.is_active() {
@@ -165,9 +167,16 @@ impl ConfirmationChannelAdapter for GrpcConfirmationAdapter {
         }
 
         if sent_count == 0 {
+            let reason = if total_streams == 0 {
+                "No active gRPC streams found for counterparties".to_string()
+            } else if errors.is_empty() {
+                "All gRPC streams are inactive".to_string()
+            } else {
+                format!("Failed to send to any stream: {}", errors.join(", "))
+            };
             Err(DomainError::ConfirmationFailed {
                 channel: "GRPC".to_string(),
-                reason: format!("Failed to send to any stream: {}", errors.join(", ")),
+                reason,
             })
         } else {
             Ok(())

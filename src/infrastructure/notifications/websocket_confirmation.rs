@@ -148,10 +148,12 @@ impl ConfirmationChannelAdapter for WebSocketConfirmationAdapter {
 
         let mut errors = Vec::new();
         let mut sent_count = 0;
+        let mut total_sessions = 0;
 
         // Send to all counterparties (venues don't receive WebSocket notifications)
         for counterparty_id in counterparty_ids {
             let sessions = self.session_registry.get_sessions(counterparty_id).await;
+            total_sessions += sessions.len();
 
             for session in &sessions {
                 if session.is_connected() {
@@ -173,9 +175,16 @@ impl ConfirmationChannelAdapter for WebSocketConfirmationAdapter {
         }
 
         if sent_count == 0 {
+            let reason = if total_sessions == 0 {
+                "No active WebSocket sessions found for counterparties".to_string()
+            } else if errors.is_empty() {
+                "All WebSocket sessions are disconnected".to_string()
+            } else {
+                format!("Failed to send to any session: {}", errors.join(", "))
+            };
             Err(DomainError::ConfirmationFailed {
                 channel: "WEBSOCKET".to_string(),
-                reason: format!("Failed to send to any session: {}", errors.join(", ")),
+                reason,
             })
         } else {
             Ok(())

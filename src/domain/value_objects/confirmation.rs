@@ -149,6 +149,15 @@ impl TradeParticipant {
     }
 }
 
+impl fmt::Display for TradeParticipant {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Counterparty(id) => write!(f, "Counterparty {}", id.as_str()),
+            Self::Venue(id) => write!(f, "Venue {}", id.as_str()),
+        }
+    }
+}
+
 /// Trade confirmation data.
 ///
 /// Contains all information needed to notify counterparties about
@@ -172,8 +181,10 @@ pub struct TradeConfirmation {
     /// Settlement method.
     pub settlement_method: SettlementMethod,
     /// Buyer participant (counterparty or venue).
+    #[serde(rename = "buyer_id")]
     pub buyer: TradeParticipant,
     /// Seller participant (counterparty or venue).
+    #[serde(rename = "seller_id")]
     pub seller: TradeParticipant,
     /// Confirmation timestamp.
     pub timestamp: Timestamp,

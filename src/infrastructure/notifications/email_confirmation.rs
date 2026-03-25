@@ -118,11 +118,11 @@ impl EmailConfirmationAdapter {
             </div>
             <div class="detail-row">
                 <span class="label">Buyer:</span>
-                <span class="value">{buyer:?}</span>
+                <span class="value">{buyer}</span>
             </div>
             <div class="detail-row">
                 <span class="label">Seller:</span>
-                <span class="value">{seller:?}</span>
+                <span class="value">{seller}</span>
             </div>
             <div class="detail-row">
                 <span class="label">Timestamp:</span>
@@ -169,8 +169,8 @@ Taker Fee: {}
 Maker Fee: {}
 Net Fee: {}
 Settlement Method: {}
-Buyer: {:?}
-Seller: {:?}
+Buyer: {}
+Seller: {}
 Timestamp: {}
 
 If you have any questions regarding this trade, please contact our support team.
