@@ -29,10 +29,10 @@ pub mod rfq_repository;
 pub mod trade_repository;
 pub mod venue_repository;
 
+pub use super::traits::BlockTradeRepository;
 pub use audit_log_repository::InMemoryNegotiationAuditLog;
 pub use block_trade_repository::InMemoryBlockTradeRepository;
 pub use counterparty_repository::InMemoryCounterpartyRepository;
-pub use super::traits::BlockTradeRepository;
 pub use delayed_report_repository::InMemoryDelayedReportRepository;
 pub use mm_performance_repository::InMemoryMmPerformanceRepository;
 pub use mock_services::{MockLastLookBehavior, MockLastLookService, MockRiskCheckService};

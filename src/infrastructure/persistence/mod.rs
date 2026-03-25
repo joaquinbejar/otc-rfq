@@ -26,6 +26,6 @@ pub mod traits;
 pub use audit_log::{AuditLogResult, NegotiationAuditLog};
 pub use event_store::{EventStore, EventStoreError, EventStoreResult, StoredEvent};
 pub use traits::{
-    BlockTradeRepository, CounterpartyRepository, RepositoryError, RepositoryResult,
-    RfqRepository, TradeRepository, VenueRepository,
+    BlockTradeRepository, CounterpartyRepository, RepositoryError, RepositoryResult, RfqRepository,
+    TradeRepository, VenueRepository,
 };
