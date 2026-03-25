@@ -144,7 +144,7 @@ impl ConfirmationChannelAdapter for GrpcConfirmationAdapter {
         // Send to all counterparties (venues don't receive gRPC notifications)
         for counterparty_id in counterparty_ids {
             let streams = self.client_registry.get_streams(counterparty_id).await;
-            
+
             for stream in &streams {
                 if stream.is_active() {
                     match stream.send_confirmation(confirmation).await {

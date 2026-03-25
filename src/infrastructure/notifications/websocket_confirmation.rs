@@ -152,7 +152,7 @@ impl ConfirmationChannelAdapter for WebSocketConfirmationAdapter {
         // Send to all counterparties (venues don't receive WebSocket notifications)
         for counterparty_id in counterparty_ids {
             let sessions = self.session_registry.get_sessions(counterparty_id).await;
-            
+
             for session in &sessions {
                 if session.is_connected() {
                     match session.send_message(message.clone()).await {

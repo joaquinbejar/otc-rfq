@@ -131,7 +131,8 @@ impl ConfirmationChannelAdapter for ApiCallbackConfirmationAdapter {
 mod tests {
     use super::*;
     use crate::domain::value_objects::{
-        Blockchain, CounterpartyId, Price, Quantity, RfqId, SettlementMethod, TradeId, TradeParticipant,
+        Blockchain, CounterpartyId, Price, Quantity, RfqId, SettlementMethod, TradeId,
+        TradeParticipant,
     };
     use rust_decimal::Decimal;
 

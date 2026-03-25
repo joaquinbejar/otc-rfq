@@ -346,7 +346,8 @@ impl ConfirmationService for MultiChannelConfirmationService {
 mod tests {
     use super::*;
     use crate::domain::value_objects::{
-        Blockchain, CounterpartyId, Price, Quantity, RfqId, SettlementMethod, TradeId, TradeParticipant,
+        Blockchain, CounterpartyId, Price, Quantity, RfqId, SettlementMethod, TradeId,
+        TradeParticipant,
     };
     use rust_decimal::Decimal;
     use std::sync::atomic::{AtomicU32, Ordering};

@@ -182,6 +182,7 @@ pub struct TradeConfirmation {
 impl TradeConfirmation {
     /// Creates a new trade confirmation.
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         trade_id: TradeId,
         rfq_id: RfqId,

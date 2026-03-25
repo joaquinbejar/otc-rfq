@@ -118,11 +118,11 @@ impl EmailConfirmationAdapter {
             </div>
             <div class="detail-row">
                 <span class="label">Buyer:</span>
-                <span class="value">{buyer}</span>
+                <span class="value">{buyer:?}</span>
             </div>
             <div class="detail-row">
                 <span class="label">Seller:</span>
-                <span class="value">{seller}</span>
+                <span class="value">{seller:?}</span>
             </div>
             <div class="detail-row">
                 <span class="label">Timestamp:</span>
@@ -146,8 +146,8 @@ impl EmailConfirmationAdapter {
             maker_fee = confirmation.maker_fee(),
             net_fee = confirmation.net_fee(),
             settlement_method = confirmation.settlement_method(),
-            buyer = format!("{:?}", confirmation.buyer()),
-            seller = format!("{:?}", confirmation.seller()),
+            buyer = confirmation.buyer(),
+            seller = confirmation.seller(),
             timestamp = confirmation.timestamp(),
         )
     }
@@ -169,8 +169,8 @@ Taker Fee: {}
 Maker Fee: {}
 Net Fee: {}
 Settlement Method: {}
-Buyer: {}
-Seller: {}
+Buyer: {:?}
+Seller: {:?}
 Timestamp: {}
 
 If you have any questions regarding this trade, please contact our support team.
@@ -187,8 +187,8 @@ This is an automated message. Please do not reply to this email.
             confirmation.maker_fee(),
             confirmation.net_fee(),
             confirmation.settlement_method(),
-            format!("{:?}", confirmation.buyer()),
-            format!("{:?}", confirmation.seller()),
+            confirmation.buyer(),
+            confirmation.seller(),
             confirmation.timestamp(),
         )
     }
@@ -287,7 +287,8 @@ impl ConfirmationChannelAdapter for EmailConfirmationAdapter {
 mod tests {
     use super::*;
     use crate::domain::value_objects::{
-        Blockchain, CounterpartyId, Price, Quantity, RfqId, SettlementMethod, TradeId, TradeParticipant,
+        Blockchain, CounterpartyId, Price, Quantity, RfqId, SettlementMethod, TradeId,
+        TradeParticipant,
     };
     use rust_decimal::Decimal;
 
