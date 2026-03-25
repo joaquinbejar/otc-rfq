@@ -32,9 +32,10 @@ pub trait GrpcStream: Send + Sync + fmt::Debug {
 }
 
 /// gRPC client registry.
+#[async_trait]
 pub trait GrpcClientRegistry: Send + Sync + fmt::Debug {
     /// Gets active gRPC streams for a counterparty.
-    fn get_streams(&self, counterparty_id: &CounterpartyId) -> Vec<StreamHandle>;
+    async fn get_streams(&self, counterparty_id: &CounterpartyId) -> Vec<StreamHandle>;
 }
 
 /// In-memory gRPC client registry implementation.
@@ -82,17 +83,14 @@ impl InMemoryGrpcClientRegistry {
     }
 }
 
+#[async_trait]
 impl GrpcClientRegistry for InMemoryGrpcClientRegistry {
-    fn get_streams(&self, counterparty_id: &CounterpartyId) -> Vec<StreamHandle> {
-        // LIMITATION: Using try_read() which can fail spuriously under contention
-        // Reviewers suggested using read().await or DashMap for better reliability
-        // However, this requires making the trait async (breaking change) or using DashMap
-        // For now, we accept potential spurious failures under high contention
-        // TODO: Refactor to async trait or DashMap in production
+    async fn get_streams(&self, counterparty_id: &CounterpartyId) -> Vec<StreamHandle> {
         self.streams
-            .try_read()
-            .ok()
-            .and_then(|streams| streams.get(counterparty_id).cloned())
+            .read()
+            .await
+            .get(counterparty_id)
+            .cloned()
             .unwrap_or_default()
     }
 }
@@ -145,7 +143,7 @@ impl ConfirmationChannelAdapter for GrpcConfirmationAdapter {
 
         // Send to all counterparties (venues don't receive gRPC notifications)
         for counterparty_id in counterparty_ids {
-            let streams = self.client_registry.get_streams(counterparty_id);
+            let streams = self.client_registry.get_streams(counterparty_id).await;
             
             for stream in &streams {
                 if stream.is_active() {

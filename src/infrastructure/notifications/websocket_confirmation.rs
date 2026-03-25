@@ -33,9 +33,10 @@ pub trait WebSocketSession: Send + Sync + fmt::Debug {
 }
 
 /// WebSocket session registry.
+#[async_trait]
 pub trait SessionRegistry: Send + Sync + fmt::Debug {
     /// Gets active sessions for a counterparty.
-    fn get_sessions(&self, counterparty_id: &CounterpartyId) -> Vec<SessionHandle>;
+    async fn get_sessions(&self, counterparty_id: &CounterpartyId) -> Vec<SessionHandle>;
 }
 
 /// In-memory session registry implementation.
@@ -83,17 +84,14 @@ impl InMemorySessionRegistry {
     }
 }
 
+#[async_trait]
 impl SessionRegistry for InMemorySessionRegistry {
-    fn get_sessions(&self, counterparty_id: &CounterpartyId) -> Vec<SessionHandle> {
-        // LIMITATION: Using try_read() which can fail spuriously under contention
-        // Reviewers suggested using read().await or DashMap for better reliability
-        // However, this requires making the trait async (breaking change) or using DashMap
-        // For now, we accept potential spurious failures under high contention
-        // TODO: Refactor to async trait or DashMap in production
+    async fn get_sessions(&self, counterparty_id: &CounterpartyId) -> Vec<SessionHandle> {
         self.sessions
-            .try_read()
-            .ok()
-            .and_then(|sessions| sessions.get(counterparty_id).cloned())
+            .read()
+            .await
+            .get(counterparty_id)
+            .cloned()
             .unwrap_or_default()
     }
 }
@@ -153,7 +151,7 @@ impl ConfirmationChannelAdapter for WebSocketConfirmationAdapter {
 
         // Send to all counterparties (venues don't receive WebSocket notifications)
         for counterparty_id in counterparty_ids {
-            let sessions = self.session_registry.get_sessions(counterparty_id);
+            let sessions = self.session_registry.get_sessions(counterparty_id).await;
             
             for session in &sessions {
                 if session.is_connected() {
