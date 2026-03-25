@@ -132,6 +132,7 @@ mod tests {
     use super::*;
     use crate::domain::value_objects::{
         Blockchain, CounterpartyId, Price, Quantity, RfqId, SettlementMethod, TradeId,
+        TradeParticipant,
     };
     use rust_decimal::Decimal;
 
@@ -145,8 +146,8 @@ mod tests {
             Decimal::new(5, 0),
             Decimal::new(15, 0),
             SettlementMethod::OnChain(Blockchain::Ethereum),
-            CounterpartyId::new("buyer-1"),
-            CounterpartyId::new("seller-1"),
+            TradeParticipant::Counterparty(CounterpartyId::new("buyer-1")),
+            TradeParticipant::Counterparty(CounterpartyId::new("seller-1")),
         )
     }
 

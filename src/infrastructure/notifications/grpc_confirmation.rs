@@ -32,9 +32,10 @@ pub trait GrpcStream: Send + Sync + fmt::Debug {
 }
 
 /// gRPC client registry.
+#[async_trait]
 pub trait GrpcClientRegistry: Send + Sync + fmt::Debug {
     /// Gets active gRPC streams for a counterparty.
-    fn get_streams(&self, counterparty_id: &CounterpartyId) -> Vec<StreamHandle>;
+    async fn get_streams(&self, counterparty_id: &CounterpartyId) -> Vec<StreamHandle>;
 }
 
 /// In-memory gRPC client registry implementation.
@@ -82,17 +83,14 @@ impl InMemoryGrpcClientRegistry {
     }
 }
 
+#[async_trait]
 impl GrpcClientRegistry for InMemoryGrpcClientRegistry {
-    fn get_streams(&self, counterparty_id: &CounterpartyId) -> Vec<StreamHandle> {
-        // LIMITATION: Using try_read() which can fail spuriously under contention
-        // Reviewers suggested using read().await or DashMap for better reliability
-        // However, this requires making the trait async (breaking change) or using DashMap
-        // For now, we accept potential spurious failures under high contention
-        // TODO: Refactor to async trait or DashMap in production
+    async fn get_streams(&self, counterparty_id: &CounterpartyId) -> Vec<StreamHandle> {
         self.streams
-            .try_read()
-            .ok()
-            .and_then(|streams| streams.get(counterparty_id).cloned())
+            .read()
+            .await
+            .get(counterparty_id)
+            .cloned()
             .unwrap_or_default()
     }
 }
@@ -124,62 +122,61 @@ impl ConfirmationChannelAdapter for GrpcConfirmationAdapter {
                 reason: "Expected Grpc destination".to_string(),
             });
         }
-        // Get streams for both buyer and seller
-        let buyer_streams = self.client_registry.get_streams(confirmation.buyer_id());
-        let seller_streams = self.client_registry.get_streams(confirmation.seller_id());
+        // Extract counterparty IDs from participants (only counterparties get notifications)
+        let mut counterparty_ids = Vec::new();
+        if let Some(id) = confirmation.buyer().as_counterparty() {
+            counterparty_ids.push(id);
+        }
+        if let Some(id) = confirmation.seller().as_counterparty() {
+            counterparty_ids.push(id);
+        }
 
-        if buyer_streams.is_empty() && seller_streams.is_empty() {
+        if counterparty_ids.is_empty() {
             return Err(DomainError::ConfirmationFailed {
                 channel: "GRPC".to_string(),
-                reason: "No active gRPC streams found for counterparties".to_string(),
+                reason: "No counterparties found in trade participants".to_string(),
             });
         }
 
         let mut errors = Vec::new();
         let mut sent_count = 0;
+        let mut total_streams = 0;
 
-        // Send to buyer streams
-        for stream in &buyer_streams {
-            if stream.is_active() {
-                match stream.send_confirmation(confirmation).await {
-                    Ok(()) => {
-                        sent_count += 1;
-                        tracing::debug!(
-                            trade_id = %confirmation.trade_id(),
-                            counterparty = %confirmation.buyer_id(),
-                            "gRPC confirmation sent to buyer"
-                        );
-                    }
-                    Err(e) => {
-                        errors.push(format!("Buyer stream error: {}", e));
-                    }
-                }
-            }
-        }
+        // Send to all counterparties (venues don't receive gRPC notifications)
+        for counterparty_id in counterparty_ids {
+            let streams = self.client_registry.get_streams(counterparty_id).await;
+            total_streams += streams.len();
 
-        // Send to seller streams
-        for stream in &seller_streams {
-            if stream.is_active() {
-                match stream.send_confirmation(confirmation).await {
-                    Ok(()) => {
-                        sent_count += 1;
-                        tracing::debug!(
-                            trade_id = %confirmation.trade_id(),
-                            counterparty = %confirmation.seller_id(),
-                            "gRPC confirmation sent to seller"
-                        );
-                    }
-                    Err(e) => {
-                        errors.push(format!("Seller stream error: {}", e));
+            for stream in &streams {
+                if stream.is_active() {
+                    match stream.send_confirmation(confirmation).await {
+                        Ok(()) => {
+                            sent_count += 1;
+                            tracing::debug!(
+                                trade_id = %confirmation.trade_id(),
+                                counterparty = %counterparty_id,
+                                "gRPC confirmation sent to counterparty"
+                            );
+                        }
+                        Err(e) => {
+                            errors.push(format!("Stream error for {}: {}", counterparty_id, e));
+                        }
                     }
                 }
             }
         }
 
         if sent_count == 0 {
+            let reason = if total_streams == 0 {
+                "No active gRPC streams found for counterparties".to_string()
+            } else if errors.is_empty() {
+                "All gRPC streams are inactive".to_string()
+            } else {
+                format!("Failed to send to any stream: {}", errors.join(", "))
+            };
             Err(DomainError::ConfirmationFailed {
                 channel: "GRPC".to_string(),
-                reason: format!("Failed to send to any stream: {}", errors.join(", ")),
+                reason,
             })
         } else {
             Ok(())
@@ -196,7 +193,7 @@ impl ConfirmationChannelAdapter for GrpcConfirmationAdapter {
 mod tests {
     use super::*;
     use crate::domain::value_objects::{
-        Blockchain, Price, Quantity, RfqId, SettlementMethod, TradeId,
+        Blockchain, Price, Quantity, RfqId, SettlementMethod, TradeId, TradeParticipant,
     };
     use rust_decimal::Decimal;
     use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -253,8 +250,8 @@ mod tests {
             Decimal::new(5, 0),
             Decimal::new(15, 0),
             SettlementMethod::OnChain(Blockchain::Ethereum),
-            CounterpartyId::new("buyer-1"),
-            CounterpartyId::new("seller-1"),
+            TradeParticipant::Counterparty(CounterpartyId::new("buyer-1")),
+            TradeParticipant::Counterparty(CounterpartyId::new("seller-1")),
         )
     }
 
@@ -383,7 +380,7 @@ mod tests {
 
         registry.cleanup_inactive().await;
 
-        let streams = registry.get_streams(&CounterpartyId::new("buyer-1"));
+        let streams = registry.get_streams(&CounterpartyId::new("buyer-1")).await;
         assert_eq!(streams.len(), 1);
     }
 

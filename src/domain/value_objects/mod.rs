@@ -70,7 +70,7 @@ pub use arithmetic::{ArithmeticError, ArithmeticResult, CheckedArithmetic, Round
 pub use compliance::{ComplianceCheckResults, ComplianceCheckResultsBuilder, RegulatoryFlag};
 pub use confirmation::{
     ChannelDeliveryStatus, ConfirmationChannel, ConfirmationStatus, NotificationDestination,
-    TradeConfirmation,
+    TradeConfirmation, TradeParticipant,
 };
 pub use enums::{AssetClass, Blockchain, OrderSide, ParseEnumError, SettlementMethod, VenueType};
 pub use ids::{

@@ -118,11 +118,11 @@ impl EmailConfirmationAdapter {
             </div>
             <div class="detail-row">
                 <span class="label">Buyer:</span>
-                <span class="value">{buyer_id}</span>
+                <span class="value">{buyer}</span>
             </div>
             <div class="detail-row">
                 <span class="label">Seller:</span>
-                <span class="value">{seller_id}</span>
+                <span class="value">{seller}</span>
             </div>
             <div class="detail-row">
                 <span class="label">Timestamp:</span>
@@ -146,8 +146,8 @@ impl EmailConfirmationAdapter {
             maker_fee = confirmation.maker_fee(),
             net_fee = confirmation.net_fee(),
             settlement_method = confirmation.settlement_method(),
-            buyer_id = confirmation.buyer_id(),
-            seller_id = confirmation.seller_id(),
+            buyer = confirmation.buyer(),
+            seller = confirmation.seller(),
             timestamp = confirmation.timestamp(),
         )
     }
@@ -187,8 +187,8 @@ This is an automated message. Please do not reply to this email.
             confirmation.maker_fee(),
             confirmation.net_fee(),
             confirmation.settlement_method(),
-            confirmation.buyer_id(),
-            confirmation.seller_id(),
+            confirmation.buyer(),
+            confirmation.seller(),
             confirmation.timestamp(),
         )
     }
@@ -288,6 +288,7 @@ mod tests {
     use super::*;
     use crate::domain::value_objects::{
         Blockchain, CounterpartyId, Price, Quantity, RfqId, SettlementMethod, TradeId,
+        TradeParticipant,
     };
     use rust_decimal::Decimal;
 
@@ -301,8 +302,8 @@ mod tests {
             Decimal::new(5, 0),
             Decimal::new(15, 0),
             SettlementMethod::OnChain(Blockchain::Ethereum),
-            CounterpartyId::new("buyer-1"),
-            CounterpartyId::new("seller-1"),
+            TradeParticipant::Counterparty(CounterpartyId::new("buyer-1")),
+            TradeParticipant::Counterparty(CounterpartyId::new("seller-1")),
         )
     }
 

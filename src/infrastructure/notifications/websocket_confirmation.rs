@@ -33,9 +33,10 @@ pub trait WebSocketSession: Send + Sync + fmt::Debug {
 }
 
 /// WebSocket session registry.
+#[async_trait]
 pub trait SessionRegistry: Send + Sync + fmt::Debug {
     /// Gets active sessions for a counterparty.
-    fn get_sessions(&self, counterparty_id: &CounterpartyId) -> Vec<SessionHandle>;
+    async fn get_sessions(&self, counterparty_id: &CounterpartyId) -> Vec<SessionHandle>;
 }
 
 /// In-memory session registry implementation.
@@ -83,17 +84,14 @@ impl InMemorySessionRegistry {
     }
 }
 
+#[async_trait]
 impl SessionRegistry for InMemorySessionRegistry {
-    fn get_sessions(&self, counterparty_id: &CounterpartyId) -> Vec<SessionHandle> {
-        // LIMITATION: Using try_read() which can fail spuriously under contention
-        // Reviewers suggested using read().await or DashMap for better reliability
-        // However, this requires making the trait async (breaking change) or using DashMap
-        // For now, we accept potential spurious failures under high contention
-        // TODO: Refactor to async trait or DashMap in production
+    async fn get_sessions(&self, counterparty_id: &CounterpartyId) -> Vec<SessionHandle> {
         self.sessions
-            .try_read()
-            .ok()
-            .and_then(|sessions| sessions.get(counterparty_id).cloned())
+            .read()
+            .await
+            .get(counterparty_id)
+            .cloned()
             .unwrap_or_default()
     }
 }
@@ -132,62 +130,61 @@ impl ConfirmationChannelAdapter for WebSocketConfirmationAdapter {
                 reason: format!("JSON serialization failed: {}", e),
             })?;
 
-        // Get sessions for both buyer and seller
-        let buyer_sessions = self.session_registry.get_sessions(confirmation.buyer_id());
-        let seller_sessions = self.session_registry.get_sessions(confirmation.seller_id());
+        // Extract counterparty IDs from participants (only counterparties get notifications)
+        let mut counterparty_ids = Vec::new();
+        if let Some(id) = confirmation.buyer().as_counterparty() {
+            counterparty_ids.push(id);
+        }
+        if let Some(id) = confirmation.seller().as_counterparty() {
+            counterparty_ids.push(id);
+        }
 
-        if buyer_sessions.is_empty() && seller_sessions.is_empty() {
+        if counterparty_ids.is_empty() {
             return Err(DomainError::ConfirmationFailed {
                 channel: "WEBSOCKET".to_string(),
-                reason: "No active WebSocket sessions found for counterparties".to_string(),
+                reason: "No counterparties found in trade participants".to_string(),
             });
         }
 
         let mut errors = Vec::new();
         let mut sent_count = 0;
+        let mut total_sessions = 0;
 
-        // Send to buyer sessions
-        for session in &buyer_sessions {
-            if session.is_connected() {
-                match session.send_message(message.clone()).await {
-                    Ok(()) => {
-                        sent_count += 1;
-                        tracing::debug!(
-                            trade_id = %confirmation.trade_id(),
-                            counterparty = %confirmation.buyer_id(),
-                            "WebSocket confirmation sent to buyer"
-                        );
-                    }
-                    Err(e) => {
-                        errors.push(format!("Buyer session error: {}", e));
-                    }
-                }
-            }
-        }
+        // Send to all counterparties (venues don't receive WebSocket notifications)
+        for counterparty_id in counterparty_ids {
+            let sessions = self.session_registry.get_sessions(counterparty_id).await;
+            total_sessions += sessions.len();
 
-        // Send to seller sessions
-        for session in &seller_sessions {
-            if session.is_connected() {
-                match session.send_message(message.clone()).await {
-                    Ok(()) => {
-                        sent_count += 1;
-                        tracing::debug!(
-                            trade_id = %confirmation.trade_id(),
-                            counterparty = %confirmation.seller_id(),
-                            "WebSocket confirmation sent to seller"
-                        );
-                    }
-                    Err(e) => {
-                        errors.push(format!("Seller session error: {}", e));
+            for session in &sessions {
+                if session.is_connected() {
+                    match session.send_message(message.clone()).await {
+                        Ok(()) => {
+                            sent_count += 1;
+                            tracing::debug!(
+                                trade_id = %confirmation.trade_id(),
+                                counterparty = %counterparty_id,
+                                "WebSocket confirmation sent to counterparty"
+                            );
+                        }
+                        Err(e) => {
+                            errors.push(format!("Session error for {}: {}", counterparty_id, e));
+                        }
                     }
                 }
             }
         }
 
         if sent_count == 0 {
+            let reason = if total_sessions == 0 {
+                "No active WebSocket sessions found for counterparties".to_string()
+            } else if errors.is_empty() {
+                "All WebSocket sessions are disconnected".to_string()
+            } else {
+                format!("Failed to send to any session: {}", errors.join(", "))
+            };
             Err(DomainError::ConfirmationFailed {
                 channel: "WEBSOCKET".to_string(),
-                reason: format!("Failed to send to any session: {}", errors.join(", ")),
+                reason,
             })
         } else {
             Ok(())
@@ -204,7 +201,7 @@ impl ConfirmationChannelAdapter for WebSocketConfirmationAdapter {
 mod tests {
     use super::*;
     use crate::domain::value_objects::{
-        Blockchain, Price, Quantity, RfqId, SettlementMethod, TradeId,
+        Blockchain, Price, Quantity, RfqId, SettlementMethod, TradeId, TradeParticipant,
     };
     use rust_decimal::Decimal;
     use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -261,8 +258,8 @@ mod tests {
             Decimal::new(5, 0),
             Decimal::new(15, 0),
             SettlementMethod::OnChain(Blockchain::Ethereum),
-            CounterpartyId::new("buyer-1"),
-            CounterpartyId::new("seller-1"),
+            TradeParticipant::Counterparty(CounterpartyId::new("buyer-1")),
+            TradeParticipant::Counterparty(CounterpartyId::new("seller-1")),
         )
     }
 
@@ -397,7 +394,7 @@ mod tests {
 
         registry.cleanup_disconnected().await;
 
-        let sessions = registry.get_sessions(&CounterpartyId::new("buyer-1"));
+        let sessions = registry.get_sessions(&CounterpartyId::new("buyer-1")).await;
         assert_eq!(sessions.len(), 1);
     }
 }
