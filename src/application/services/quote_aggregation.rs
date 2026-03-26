@@ -152,6 +152,7 @@ pub struct QuoteAggregationEngine {
     venue_registry: Arc<dyn VenueRegistry>,
     ranking_strategy: Arc<dyn RankingStrategy>,
     config: AggregationConfig,
+    quote_normalizer: Option<Arc<crate::domain::services::quote_normalizer::QuoteNormalizer>>,
 }
 
 impl QuoteAggregationEngine {
@@ -166,6 +167,7 @@ impl QuoteAggregationEngine {
             venue_registry,
             ranking_strategy,
             config,
+            quote_normalizer: None,
         }
     }
 
@@ -180,6 +182,26 @@ impl QuoteAggregationEngine {
             ranking_strategy,
             AggregationConfig::default(),
         )
+    }
+
+    /// Creates a new engine with quote normalization enabled.
+    ///
+    /// When a normalizer is provided, quotes will be normalized before ranking
+    /// to ensure fair multi-venue comparison with FX conversion, fee inclusion,
+    /// and quantity adjustments.
+    #[must_use]
+    pub fn with_normalizer(
+        venue_registry: Arc<dyn VenueRegistry>,
+        ranking_strategy: Arc<dyn RankingStrategy>,
+        config: AggregationConfig,
+        quote_normalizer: Arc<crate::domain::services::quote_normalizer::QuoteNormalizer>,
+    ) -> Self {
+        Self {
+            venue_registry,
+            ranking_strategy,
+            config,
+            quote_normalizer: Some(quote_normalizer),
+        }
     }
 
     /// Collects quotes from all venues and ranks them.
@@ -236,8 +258,24 @@ impl QuoteAggregationEngine {
             });
         }
 
+        // Normalize quotes if normalizer is configured
+        let quotes_to_rank = if let Some(normalizer) = &self.quote_normalizer {
+            use crate::domain::entities::quote_normalizer::QuoteType;
+
+            valid_quotes
+                .iter()
+                .map(|q| {
+                    // Normalize with QuoteType::Firm (default for aggregation)
+                    let normalized = normalizer.normalize(q, QuoteType::Firm, None);
+                    normalized.to_quote()
+                })
+                .collect()
+        } else {
+            valid_quotes
+        };
+
         // Rank quotes
-        let mut ranked_quotes = self.ranking_strategy.rank(&valid_quotes, rfq.side());
+        let mut ranked_quotes = self.ranking_strategy.rank(&quotes_to_rank, rfq.side());
 
         // Apply max quotes limit
         if let Some(max) = self.config.max_quotes {
