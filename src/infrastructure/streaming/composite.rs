@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::num::NonZeroU32;
 use tokio::sync::RwLock;
+use tracing::{info, instrument, warn};
 
 /// Channel type for streaming quote communication.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -255,6 +256,26 @@ impl CompositeStreamingQuoteService {
     }
 
     async fn record_stats(&self, mm_id: &CounterpartyId, result: &StreamingQuoteResult) {
+        // Centralized result logging with structured fields
+        match result {
+            StreamingQuoteResult::Accepted { is_best, quote_id } => {
+                if *is_best {
+                    info!(
+                        mm_id = %mm_id,
+                        quote_id = %quote_id,
+                        "New best quote from MM"
+                    );
+                }
+            }
+            StreamingQuoteResult::Rejected { reason } => {
+                warn!(
+                    mm_id = %mm_id,
+                    reason = %reason,
+                    "Quote rejected"
+                );
+            }
+        }
+
         {
             let mut stats = self.stats.write().await;
             stats.record_received();
@@ -421,6 +442,7 @@ impl StreamingQuoteService for CompositeStreamingQuoteService {
         self.mm_stats.get(mm_id).map(|s| s.clone())
     }
 
+    #[instrument(skip(self))]
     async fn remove_stale_quotes(&self) -> usize {
         let mut total = 0;
         let registered: std::collections::HashSet<_> = {
@@ -433,6 +455,10 @@ impl StreamingQuoteService for CompositeStreamingQuoteService {
 
         for mut book in self.books.iter_mut() {
             total += book.remove_stale(&registered);
+        }
+
+        if total > 0 {
+            info!(total = total, "Removed stale quotes");
         }
 
         let mut stats = self.stats.write().await;
