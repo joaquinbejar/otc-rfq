@@ -27,6 +27,7 @@ use crate::domain::entities::mm_performance::MmPerformanceMetrics;
 use crate::domain::entities::rfq::Rfq;
 use crate::domain::entities::trade::Trade;
 use crate::domain::entities::venue::{Venue, VenueHealth};
+use crate::domain::services::fee_engine::{FeeEngine, FeeSchedule};
 use crate::domain::services::mm_incentive_service::{MmIncentiveError, MmIncentiveService};
 use crate::domain::services::mm_performance::MmPerformanceTracker;
 use crate::domain::value_objects::timestamp::Timestamp;
@@ -59,6 +60,8 @@ pub struct AppState {
     pub mm_performance_tracker: Option<Arc<MmPerformanceTracker>>,
     /// MM incentive service (optional — `None` disables MM incentive endpoints).
     pub mm_incentive_service: Option<Arc<MmIncentiveService>>,
+    /// Fee engine (optional — `None` disables fee schedule endpoints).
+    pub fee_engine: Option<Arc<FeeEngine>>,
 }
 
 /// Repository for venue persistence.
@@ -1069,6 +1072,74 @@ fn internal_error(message: &str) -> (StatusCode, Json<ErrorResponse>) {
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(ErrorResponse::new("INTERNAL_ERROR", message)),
     )
+}
+
+// ============================================================================
+// Fee Schedule Handlers
+// ============================================================================
+
+/// GET /api/v1/fees/schedule
+///
+/// Returns the base fee schedule.
+///
+/// # Response
+///
+/// ```json
+/// {
+///   "rfq_rates": {
+///     "taker_rate_bps": 3,
+///     "maker_rate_bps": -1
+///   },
+///   "block_rates": {
+///     "taker_rate_bps": 2,
+///     "maker_rate_bps": 2
+///   },
+///   "volume_discounts": [
+///     {"threshold_usd": 1000000, "discount_pct": 10},
+///     {"threshold_usd": 10000000, "discount_pct": 25},
+///     {"threshold_usd": 100000000, "discount_pct": 50}
+///   ]
+/// }
+/// ```
+///
+/// # Errors
+///
+/// Returns 501 Not Implemented if fee engine is not configured.
+#[instrument(skip(state))]
+pub async fn get_fee_schedule(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<FeeSchedule>, (StatusCode, Json<ErrorResponse>)> {
+    let fee_engine = state
+        .fee_engine
+        .as_ref()
+        .ok_or_else(|| not_implemented("fee engine not configured"))?;
+
+    Ok(Json(fee_engine.schedule().clone()))
+}
+
+/// GET /api/v1/fees/schedule/{counterparty_id}
+///
+/// Returns fee schedule for a specific counterparty.
+///
+/// Currently returns the base schedule. Counterparty-specific overrides
+/// will be implemented in a follow-up issue.
+///
+/// # Errors
+///
+/// Returns 501 Not Implemented if fee engine is not configured.
+#[instrument(skip(state))]
+pub async fn get_counterparty_fee_schedule(
+    State(state): State<Arc<AppState>>,
+    Path(_counterparty_id): Path<String>,
+) -> Result<Json<FeeSchedule>, (StatusCode, Json<ErrorResponse>)> {
+    let fee_engine = state
+        .fee_engine
+        .as_ref()
+        .ok_or_else(|| not_implemented("fee engine not configured"))?;
+
+    // TODO: Implement override lookup when FeeOverrideProvider is integrated
+    // For now, return base schedule
+    Ok(Json(fee_engine.schedule().clone()))
 }
 
 #[cfg(test)]

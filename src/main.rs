@@ -222,6 +222,7 @@ fn start_rest_server(
             trade_repository,
             mm_performance_tracker,
             mm_incentive_service: None, // TODO: Initialize when VolumeTracker is available
+            fee_engine: None,           // TODO: Initialize when fee configuration is available
         });
 
         let router = create_router(state);

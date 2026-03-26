@@ -16,8 +16,13 @@
 //! │       └── /            DELETE - Cancel RFQ
 //! ├── /venues              GET  - List venues
 //! │   └── /{id}            PUT  - Update venue config
-//! └── /trades              GET  - List trades
-//!     └── /{id}            GET  - Get trade by ID
+//! ├── /trades              GET  - List trades
+//! │   └── /{id}            GET  - Get trade by ID
+//! ├── /mm-performance      GET  - List MM performance metrics
+//! │   └── /{mm_id}         GET  - Get MM performance by ID
+//! ├── /mm/{mm_id}/incentive-status  GET  - Get MM incentive status
+//! └── /fees/schedule       GET  - Get base fee schedule
+//!     └── /{counterparty_id}  GET  - Get counterparty fee schedule
 //! ```
 //!
 //! # Examples
@@ -35,9 +40,9 @@
 //! ```
 
 use crate::api::rest::handlers::{
-    AppState, cancel_rfq, create_rfq, get_mm_incentive_status, get_mm_performance, get_rfq,
-    get_trade, health_check, list_mm_performance, list_rfqs, list_trades, list_venues,
-    update_venue,
+    AppState, cancel_rfq, create_rfq, get_counterparty_fee_schedule, get_fee_schedule,
+    get_mm_incentive_status, get_mm_performance, get_rfq, get_trade, health_check,
+    list_mm_performance, list_rfqs, list_trades, list_venues, update_venue,
 };
 use axum::{Router, routing::get, routing::put};
 use std::sync::Arc;
@@ -89,6 +94,14 @@ pub fn create_router(state: Arc<AppState>) -> Router {
     let mm_incentive_routes =
         Router::new().route("/{mm_id}/incentive-status", get(get_mm_incentive_status));
 
+    // Fee schedule routes
+    let fee_routes = Router::new()
+        .route("/schedule", get(get_fee_schedule))
+        .route(
+            "/schedule/{counterparty_id}",
+            get(get_counterparty_fee_schedule),
+        );
+
     // API v1 routes
     let api_v1 = Router::new()
         .route("/health", get(health_check))
@@ -96,7 +109,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .nest("/venues", venue_routes)
         .nest("/trades", trade_routes)
         .nest("/mm-performance", mm_performance_routes)
-        .nest("/mm", mm_incentive_routes);
+        .nest("/mm", mm_incentive_routes)
+        .nest("/fees", fee_routes);
 
     // Main router with middleware
     Router::new()
@@ -149,13 +163,21 @@ pub fn create_test_router(state: Arc<AppState>) -> Router {
     let mm_incentive_routes =
         Router::new().route("/{mm_id}/incentive-status", get(get_mm_incentive_status));
 
+    let fee_routes = Router::new()
+        .route("/schedule", get(get_fee_schedule))
+        .route(
+            "/schedule/{counterparty_id}",
+            get(get_counterparty_fee_schedule),
+        );
+
     let api_v1 = Router::new()
         .route("/health", get(health_check))
         .nest("/rfqs", rfq_routes)
         .nest("/venues", venue_routes)
         .nest("/trades", trade_routes)
         .nest("/mm-performance", mm_performance_routes)
-        .nest("/mm", mm_incentive_routes);
+        .nest("/mm", mm_incentive_routes)
+        .nest("/fees", fee_routes);
 
     Router::new().nest("/api/v1", api_v1).with_state(state)
 }
@@ -241,6 +263,7 @@ mod tests {
             trade_repository: Arc::new(MockTradeRepository::default()),
             mm_performance_tracker: None,
             mm_incentive_service: None,
+            fee_engine: None,
         })
     }
 
@@ -427,5 +450,92 @@ mod tests {
 
         // Service is None in test state, so endpoint returns 501 Not Implemented
         assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+    }
+
+    #[tokio::test]
+    async fn get_fee_schedule_returns_501_when_engine_disabled() {
+        let state = create_test_state();
+        let router = create_test_router(state);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/fees/schedule")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Fee engine is None in test state, so endpoint returns 501 Not Implemented
+        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+    }
+
+    #[tokio::test]
+    async fn get_counterparty_fee_schedule_returns_501_when_engine_disabled() {
+        let state = create_test_state();
+        let router = create_test_router(state);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/fees/schedule/client-123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Fee engine is None in test state, so endpoint returns 501 Not Implemented
+        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+    }
+
+    fn create_test_state_with_fee_engine() -> Arc<AppState> {
+        use crate::domain::services::FeeEngine;
+
+        Arc::new(AppState {
+            rfq_repository: Arc::new(MockRfqRepository::default()),
+            venue_repository: Arc::new(MockVenueRepository::default()),
+            trade_repository: Arc::new(MockTradeRepository::default()),
+            mm_performance_tracker: None,
+            mm_incentive_service: None,
+            fee_engine: Some(Arc::new(FeeEngine::default_with_noop())),
+        })
+    }
+
+    #[tokio::test]
+    async fn get_fee_schedule_returns_200_when_engine_enabled() {
+        let state = create_test_state_with_fee_engine();
+        let router = create_test_router(state);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/fees/schedule")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn get_counterparty_fee_schedule_returns_200_when_engine_enabled() {
+        let state = create_test_state_with_fee_engine();
+        let router = create_test_router(state);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/fees/schedule/client-123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }
