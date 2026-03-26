@@ -5,24 +5,23 @@
 //! These events provide an audit trail for lock acquisition,
 //! execution commits, and rollbacks.
 
+use crate::domain::events::domain_event::{DomainEvent, EventMetadata, EventType};
 use crate::domain::services::quote_lock::LockHolderId;
 use crate::domain::services::resource_lock::ResourceLock;
-use crate::domain::value_objects::{QuoteId, RfqId, Timestamp, TradeId};
+use crate::domain::value_objects::{EventId, QuoteId, RfqId, Timestamp, TradeId};
 use serde::{Deserialize, Serialize};
 
 /// Event emitted when locks are successfully acquired.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LocksAcquired {
-    /// The RFQ ID associated with this execution.
-    pub rfq_id: RfqId,
+    /// Event metadata.
+    pub metadata: EventMetadata,
     /// The quote ID being executed.
     pub quote_id: QuoteId,
     /// Resources that were locked.
     pub resources: Vec<ResourceLock>,
     /// The holder that acquired the locks.
     pub holder_id: LockHolderId,
-    /// When the locks were acquired.
-    pub acquired_at: Timestamp,
 }
 
 impl LocksAcquired {
@@ -35,11 +34,10 @@ impl LocksAcquired {
         holder_id: LockHolderId,
     ) -> Self {
         Self {
-            rfq_id,
+            metadata: EventMetadata::for_rfq(rfq_id),
             quote_id,
             resources,
             holder_id,
-            acquired_at: Timestamp::now(),
         }
     }
 
@@ -51,19 +49,42 @@ impl LocksAcquired {
     }
 }
 
+impl DomainEvent for LocksAcquired {
+    #[inline]
+    fn event_id(&self) -> EventId {
+        self.metadata.event_id
+    }
+
+    #[inline]
+    fn rfq_id(&self) -> Option<RfqId> {
+        self.metadata.rfq_id
+    }
+
+    #[inline]
+    fn timestamp(&self) -> Timestamp {
+        self.metadata.timestamp
+    }
+
+    fn event_type(&self) -> EventType {
+        EventType::Trade
+    }
+
+    fn event_name(&self) -> &'static str {
+        "LocksAcquired"
+    }
+}
+
 /// Event emitted when execution is successfully committed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionCommitted {
-    /// The RFQ ID.
-    pub rfq_id: RfqId,
+    /// Event metadata.
+    pub metadata: EventMetadata,
     /// The trade ID created.
     pub trade_id: TradeId,
     /// The quote ID that was executed.
     pub quote_id: QuoteId,
     /// Time locks were held in milliseconds.
     pub locks_held_ms: u64,
-    /// When the execution was committed.
-    pub committed_at: Timestamp,
 }
 
 impl ExecutionCommitted {
@@ -71,28 +92,50 @@ impl ExecutionCommitted {
     #[must_use]
     pub fn new(rfq_id: RfqId, trade_id: TradeId, quote_id: QuoteId, locks_held_ms: u64) -> Self {
         Self {
-            rfq_id,
+            metadata: EventMetadata::for_rfq(rfq_id),
             trade_id,
             quote_id,
             locks_held_ms,
-            committed_at: Timestamp::now(),
         }
+    }
+}
+
+impl DomainEvent for ExecutionCommitted {
+    #[inline]
+    fn event_id(&self) -> EventId {
+        self.metadata.event_id
+    }
+
+    #[inline]
+    fn rfq_id(&self) -> Option<RfqId> {
+        self.metadata.rfq_id
+    }
+
+    #[inline]
+    fn timestamp(&self) -> Timestamp {
+        self.metadata.timestamp
+    }
+
+    fn event_type(&self) -> EventType {
+        EventType::Trade
+    }
+
+    fn event_name(&self) -> &'static str {
+        "ExecutionCommitted"
     }
 }
 
 /// Event emitted when execution is rolled back.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionRolledBack {
-    /// The RFQ ID.
-    pub rfq_id: RfqId,
+    /// Event metadata.
+    pub metadata: EventMetadata,
     /// The quote ID that failed execution.
     pub quote_id: QuoteId,
     /// Reason for the rollback.
     pub reason: String,
     /// Resources that were released.
     pub locks_released: Vec<ResourceLock>,
-    /// When the rollback occurred.
-    pub rolled_back_at: Timestamp,
 }
 
 impl ExecutionRolledBack {
@@ -105,11 +148,10 @@ impl ExecutionRolledBack {
         locks_released: Vec<ResourceLock>,
     ) -> Self {
         Self {
-            rfq_id,
+            metadata: EventMetadata::for_rfq(rfq_id),
             quote_id,
             reason,
             locks_released,
-            rolled_back_at: Timestamp::now(),
         }
     }
 
@@ -121,19 +163,42 @@ impl ExecutionRolledBack {
     }
 }
 
+impl DomainEvent for ExecutionRolledBack {
+    #[inline]
+    fn event_id(&self) -> EventId {
+        self.metadata.event_id
+    }
+
+    #[inline]
+    fn rfq_id(&self) -> Option<RfqId> {
+        self.metadata.rfq_id
+    }
+
+    #[inline]
+    fn timestamp(&self) -> Timestamp {
+        self.metadata.timestamp
+    }
+
+    fn event_type(&self) -> EventType {
+        EventType::Trade
+    }
+
+    fn event_name(&self) -> &'static str {
+        "ExecutionRolledBack"
+    }
+}
+
 /// Event emitted when lock acquisition fails.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LockAcquisitionFailed {
-    /// The RFQ ID.
-    pub rfq_id: RfqId,
+    /// Event metadata.
+    pub metadata: EventMetadata,
     /// The quote ID that was being executed.
     pub quote_id: QuoteId,
     /// Resources that were requested.
     pub requested_resources: Vec<ResourceLock>,
     /// Reason for the failure.
     pub reason: String,
-    /// When the failure occurred.
-    pub failed_at: Timestamp,
 }
 
 impl LockAcquisitionFailed {
@@ -146,12 +211,36 @@ impl LockAcquisitionFailed {
         reason: String,
     ) -> Self {
         Self {
-            rfq_id,
+            metadata: EventMetadata::for_rfq(rfq_id),
             quote_id,
             requested_resources,
             reason,
-            failed_at: Timestamp::now(),
         }
+    }
+}
+
+impl DomainEvent for LockAcquisitionFailed {
+    #[inline]
+    fn event_id(&self) -> EventId {
+        self.metadata.event_id
+    }
+
+    #[inline]
+    fn rfq_id(&self) -> Option<RfqId> {
+        self.metadata.rfq_id
+    }
+
+    #[inline]
+    fn timestamp(&self) -> Timestamp {
+        self.metadata.timestamp
+    }
+
+    fn event_type(&self) -> EventType {
+        EventType::Trade
+    }
+
+    fn event_name(&self) -> &'static str {
+        "LockAcquisitionFailed"
     }
 }
 
@@ -192,6 +281,51 @@ impl From<LockAcquisitionFailed> for AtomicExecutionEvent {
     }
 }
 
+impl DomainEvent for AtomicExecutionEvent {
+    #[inline]
+    fn event_id(&self) -> EventId {
+        match self {
+            Self::LocksAcquired(e) => e.event_id(),
+            Self::ExecutionCommitted(e) => e.event_id(),
+            Self::ExecutionRolledBack(e) => e.event_id(),
+            Self::LockAcquisitionFailed(e) => e.event_id(),
+        }
+    }
+
+    #[inline]
+    fn rfq_id(&self) -> Option<RfqId> {
+        match self {
+            Self::LocksAcquired(e) => e.rfq_id(),
+            Self::ExecutionCommitted(e) => e.rfq_id(),
+            Self::ExecutionRolledBack(e) => e.rfq_id(),
+            Self::LockAcquisitionFailed(e) => e.rfq_id(),
+        }
+    }
+
+    #[inline]
+    fn timestamp(&self) -> Timestamp {
+        match self {
+            Self::LocksAcquired(e) => e.timestamp(),
+            Self::ExecutionCommitted(e) => e.timestamp(),
+            Self::ExecutionRolledBack(e) => e.timestamp(),
+            Self::LockAcquisitionFailed(e) => e.timestamp(),
+        }
+    }
+
+    fn event_type(&self) -> EventType {
+        EventType::Trade
+    }
+
+    fn event_name(&self) -> &'static str {
+        match self {
+            Self::LocksAcquired(e) => e.event_name(),
+            Self::ExecutionCommitted(e) => e.event_name(),
+            Self::ExecutionRolledBack(e) => e.event_name(),
+            Self::LockAcquisitionFailed(e) => e.event_name(),
+        }
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -210,7 +344,7 @@ mod tests {
 
         let event = LocksAcquired::new(rfq_id, quote_id, resources.clone(), holder_id);
 
-        assert_eq!(event.rfq_id, rfq_id);
+        assert_eq!(event.rfq_id(), Some(rfq_id));
         assert_eq!(event.quote_id, quote_id);
         assert_eq!(event.resource_count(), 2);
         assert_eq!(event.holder_id, holder_id);
@@ -224,7 +358,7 @@ mod tests {
 
         let event = ExecutionCommitted::new(rfq_id, trade_id, quote_id, 50);
 
-        assert_eq!(event.rfq_id, rfq_id);
+        assert_eq!(event.rfq_id(), Some(rfq_id));
         assert_eq!(event.trade_id, trade_id);
         assert_eq!(event.quote_id, quote_id);
         assert_eq!(event.locks_held_ms, 50);
@@ -243,7 +377,7 @@ mod tests {
             resources.clone(),
         );
 
-        assert_eq!(event.rfq_id, rfq_id);
+        assert_eq!(event.rfq_id(), Some(rfq_id));
         assert_eq!(event.quote_id, quote_id);
         assert_eq!(event.reason, "test failure");
         assert_eq!(event.locks_released_count(), 1);
@@ -258,7 +392,7 @@ mod tests {
         let event =
             LockAcquisitionFailed::new(rfq_id, quote_id, resources.clone(), "timeout".to_string());
 
-        assert_eq!(event.rfq_id, rfq_id);
+        assert_eq!(event.rfq_id(), Some(rfq_id));
         assert_eq!(event.quote_id, quote_id);
         assert_eq!(event.reason, "timeout");
     }
@@ -290,5 +424,60 @@ mod tests {
             event,
             AtomicExecutionEvent::LockAcquisitionFailed(_)
         ));
+    }
+
+    #[test]
+    fn locks_acquired_implements_domain_event() {
+        let rfq_id = RfqId::new_v4();
+        let event = LocksAcquired::new(rfq_id, QuoteId::new_v4(), vec![], LockHolderId::new());
+
+        assert_eq!(event.rfq_id(), Some(rfq_id));
+        assert_eq!(event.event_type(), EventType::Trade);
+        assert_eq!(event.event_name(), "LocksAcquired");
+        assert!(!event.event_id().to_string().is_empty());
+    }
+
+    #[test]
+    fn execution_committed_implements_domain_event() {
+        let rfq_id = RfqId::new_v4();
+        let event = ExecutionCommitted::new(rfq_id, TradeId::new_v4(), QuoteId::new_v4(), 100);
+
+        assert_eq!(event.rfq_id(), Some(rfq_id));
+        assert_eq!(event.event_type(), EventType::Trade);
+        assert_eq!(event.event_name(), "ExecutionCommitted");
+    }
+
+    #[test]
+    fn execution_rolled_back_implements_domain_event() {
+        let rfq_id = RfqId::new_v4();
+        let event =
+            ExecutionRolledBack::new(rfq_id, QuoteId::new_v4(), "error".to_string(), vec![]);
+
+        assert_eq!(event.rfq_id(), Some(rfq_id));
+        assert_eq!(event.event_type(), EventType::Trade);
+        assert_eq!(event.event_name(), "ExecutionRolledBack");
+    }
+
+    #[test]
+    fn lock_acquisition_failed_implements_domain_event() {
+        let rfq_id = RfqId::new_v4();
+        let event =
+            LockAcquisitionFailed::new(rfq_id, QuoteId::new_v4(), vec![], "timeout".to_string());
+
+        assert_eq!(event.rfq_id(), Some(rfq_id));
+        assert_eq!(event.event_type(), EventType::Trade);
+        assert_eq!(event.event_name(), "LockAcquisitionFailed");
+    }
+
+    #[test]
+    fn atomic_execution_event_enum_implements_domain_event() {
+        let rfq_id = RfqId::new_v4();
+        let locks_acquired =
+            LocksAcquired::new(rfq_id, QuoteId::new_v4(), vec![], LockHolderId::new());
+        let event: AtomicExecutionEvent = locks_acquired.into();
+
+        assert_eq!(event.rfq_id(), Some(rfq_id));
+        assert_eq!(event.event_type(), EventType::Trade);
+        assert_eq!(event.event_name(), "LocksAcquired");
     }
 }
