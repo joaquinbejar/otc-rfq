@@ -401,6 +401,7 @@ impl<E: LegExecutor> MultiLegExecutor<E> {
                             e.to_string(),
                             events,
                             started_at,
+                            package_quote.net_price(),
                         )
                         .await;
                 }
@@ -436,18 +437,24 @@ impl<E: LegExecutor> MultiLegExecutor<E> {
         &self,
         execution_id: MultiLegExecutionId,
         executed_legs: &[LegExecutionResult],
-        _failed_leg_index: usize,
-        _failed_leg_instrument: String,
+        failed_leg_index: usize,
+        failed_leg_instrument: String,
         failure_reason: String,
         mut events: Vec<MultiLegExecutionEvent>,
         started_at: Timestamp,
+        net_price: Decimal,
     ) -> DomainResult<MultiLegExecutionResult> {
+        // Enrich failure reason with leg context
+        let enriched_reason = format!(
+            "Leg {} ({}) failed: {}",
+            failed_leg_index, failed_leg_instrument, failure_reason
+        );
         if executed_legs.is_empty() {
             // No legs to roll back - return result with RolledBack state
             return Ok(MultiLegExecutionResult {
                 execution_id,
                 legs: Vec::new(),
-                net_price: Decimal::ZERO,
+                net_price,
                 state: MultiLegExecutionState::RolledBack,
                 started_at,
                 completed_at: Timestamp::now(),
@@ -457,12 +464,12 @@ impl<E: LegExecutor> MultiLegExecutor<E> {
 
         let rollback_start = MultiLegRollbackStarted::new(
             execution_id.clone(),
-            failure_reason.clone(),
+            enriched_reason.clone(),
             executed_legs.len(),
         );
         events.push(rollback_start.into());
 
-        match self.rollback_all(executed_legs, &failure_reason).await {
+        match self.rollback_all(executed_legs, &enriched_reason).await {
             Ok(rolled_back_count) => {
                 let rollback_complete =
                     MultiLegRollbackCompleted::new(execution_id.clone(), rolled_back_count);
@@ -472,7 +479,7 @@ impl<E: LegExecutor> MultiLegExecutor<E> {
                 Ok(MultiLegExecutionResult {
                     execution_id,
                     legs: executed_legs.to_vec(),
-                    net_price: Decimal::ZERO,
+                    net_price,
                     state: MultiLegExecutionState::RolledBack,
                     started_at,
                     completed_at: Timestamp::now(),
@@ -494,7 +501,7 @@ impl<E: LegExecutor> MultiLegExecutor<E> {
                     executed_legs.len(),
                     partially_rolled_back,
                     executed_legs.len() - partially_rolled_back,
-                    failure_reason.clone(),
+                    enriched_reason.clone(),
                     rollback_error.to_string(),
                 );
                 events.push(partial_failure.into());
@@ -503,7 +510,7 @@ impl<E: LegExecutor> MultiLegExecutor<E> {
                 Ok(MultiLegExecutionResult {
                     execution_id,
                     legs: executed_legs.to_vec(),
-                    net_price: Decimal::ZERO,
+                    net_price,
                     state: MultiLegExecutionState::PartialFailure {
                         executed: executed_legs.len(),
                         rolled_back: partially_rolled_back,
@@ -841,7 +848,7 @@ mod tests {
         let result = multi_leg.execute(&package_quote).await;
         assert!(result.is_ok());
         let execution = result.unwrap();
-        assert!(!execution.events.is_empty());
+        assert!(execution.events.len() >= 2, "Expected at least 2 events");
         assert!(matches!(
             execution.events[0],
             MultiLegExecutionEvent::Started(_)
