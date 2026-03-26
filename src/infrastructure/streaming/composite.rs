@@ -11,10 +11,11 @@ use crate::domain::services::streaming_quote::{
 use crate::domain::value_objects::{CounterpartyId, Instrument};
 use async_trait::async_trait;
 use dashmap::DashMap;
+use governor::{Quota, RateLimiter, clock::DefaultClock, state::keyed::DashMapStateStore};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::num::NonZeroU32;
 use tokio::sync::RwLock;
 
 /// Channel type for streaming quote communication.
@@ -52,41 +53,6 @@ impl VenueStreamingConfig {
     #[must_use]
     pub fn new(channel: StreamingChannel, enabled: bool) -> Self {
         Self { channel, enabled }
-    }
-}
-
-/// Rate limiting state for a market maker.
-#[derive(Debug)]
-struct RateLimitState {
-    count: AtomicU64,
-    window_start_ms: AtomicU64,
-}
-
-impl RateLimitState {
-    fn new() -> Self {
-        Self {
-            count: AtomicU64::new(0),
-            window_start_ms: AtomicU64::new(0),
-        }
-    }
-
-    fn check_and_increment(&self, max_per_second: u32) -> (bool, u32) {
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
-
-        let window_start = self.window_start_ms.load(Ordering::Relaxed);
-
-        if now_ms.saturating_sub(window_start) >= 1000 {
-            self.window_start_ms.store(now_ms, Ordering::Relaxed);
-            self.count.store(1, Ordering::Relaxed);
-            return (false, 1);
-        }
-
-        let count = self.count.fetch_add(1, Ordering::Relaxed) + 1;
-        let is_exceeded = count > max_per_second as u64;
-        (is_exceeded, count as u32)
     }
 }
 
@@ -189,7 +155,7 @@ impl InstrumentBook {
 /// Composite streaming quote service that aggregates quotes from all MMs.
 pub struct CompositeStreamingQuoteService {
     books: DashMap<Instrument, InstrumentBook>,
-    rate_limits: DashMap<CounterpartyId, RateLimitState>,
+    rate_limiter: RateLimiter<CounterpartyId, DashMapStateStore<CounterpartyId>, DefaultClock>,
     registered_mms: DashMap<CounterpartyId, bool>,
     config: StreamingQuoteConfig,
     stats: RwLock<StreamingQuoteStats>,
@@ -207,11 +173,23 @@ impl fmt::Debug for CompositeStreamingQuoteService {
 
 impl CompositeStreamingQuoteService {
     /// Creates a new composite streaming quote service.
+    ///
+    /// # Panics
+    ///
+    /// This function will never panic as the fallback quota is a compile-time constant.
     #[must_use]
     pub fn new(config: StreamingQuoteConfig) -> Self {
+        const DEFAULT_QUOTA: NonZeroU32 = match NonZeroU32::new(100) {
+            Some(v) => v,
+            None => unreachable!(),
+        };
+        let quota = Quota::per_second(
+            NonZeroU32::new(config.max_quotes_per_second()).unwrap_or(DEFAULT_QUOTA),
+        );
+
         Self {
             books: DashMap::new(),
-            rate_limits: DashMap::new(),
+            rate_limiter: RateLimiter::dashmap(quota),
             registered_mms: DashMap::new(),
             config,
             stats: RwLock::new(StreamingQuoteStats::new()),
@@ -271,17 +249,12 @@ impl CompositeStreamingQuoteService {
     }
 
     fn check_rate_limit(&self, mm_id: &CounterpartyId) -> Result<(), StreamingQuoteRejectReason> {
-        let state = self
-            .rate_limits
-            .entry(mm_id.clone())
-            .or_insert_with(RateLimitState::new);
-        let max_rate = self.config.max_quotes_per_second();
-        let (exceeded, current) = state.check_and_increment(max_rate);
-
-        if exceeded {
-            Err(StreamingQuoteRejectReason::rate_limited(current, max_rate))
-        } else {
-            Ok(())
+        match self.rate_limiter.check_key(mm_id) {
+            Ok(_) => Ok(()),
+            Err(_) => {
+                let max_rate = self.config.max_quotes_per_second();
+                Err(StreamingQuoteRejectReason::rate_limited(max_rate, max_rate))
+            }
         }
     }
 

@@ -73,6 +73,7 @@ async-trait = { workspace = true }
 futures = { workspace = true }
 parking_lot = { workspace = true }
 dashmap = { workspace = true }
+governor = "0.10"
 bytes = { workspace = true }
 toml = { workspace = true }
 rand = { workspace = true }
