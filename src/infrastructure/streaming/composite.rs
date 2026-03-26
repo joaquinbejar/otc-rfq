@@ -173,18 +173,10 @@ impl fmt::Debug for CompositeStreamingQuoteService {
 
 impl CompositeStreamingQuoteService {
     /// Creates a new composite streaming quote service.
-    ///
-    /// # Panics
-    ///
-    /// This function will never panic as the fallback quota is a compile-time constant.
     #[must_use]
     pub fn new(config: StreamingQuoteConfig) -> Self {
-        const DEFAULT_QUOTA: NonZeroU32 = match NonZeroU32::new(100) {
-            Some(v) => v,
-            None => unreachable!(),
-        };
         let quota = Quota::per_second(
-            NonZeroU32::new(config.max_quotes_per_second()).unwrap_or(DEFAULT_QUOTA),
+            NonZeroU32::new(config.max_quotes_per_second()).unwrap_or(NonZeroU32::MIN),
         );
 
         Self {
@@ -253,7 +245,11 @@ impl CompositeStreamingQuoteService {
             Ok(_) => Ok(()),
             Err(_) => {
                 let max_rate = self.config.max_quotes_per_second();
-                Err(StreamingQuoteRejectReason::rate_limited(max_rate, max_rate))
+                let current_rate = max_rate.saturating_add(1);
+                Err(StreamingQuoteRejectReason::rate_limited(
+                    current_rate,
+                    max_rate,
+                ))
             }
         }
     }
@@ -473,12 +469,20 @@ impl StreamingQuoteService for CompositeStreamingQuoteService {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::useless_vec,
+    clippy::clone_on_ref_ptr
+)]
 mod tests {
     use super::*;
     use crate::domain::value_objects::enums::{AssetClass, SettlementMethod};
     use crate::domain::value_objects::symbol::Symbol;
     use crate::domain::value_objects::{Price, Quantity};
+    use std::thread::sleep;
+    use std::time::Duration;
 
     fn create_test_instrument() -> Instrument {
         let symbol = Symbol::new("BTC/USD").unwrap();
@@ -651,5 +655,35 @@ mod tests {
         let stats = service.get_stats().await;
         assert_eq!(stats.quotes_received, 1);
         assert_eq!(stats.quotes_accepted, 1);
+    }
+
+    #[tokio::test]
+    async fn rate_limit_rejects_second_immediate_quote_and_allows_later_one() {
+        let config = StreamingQuoteConfig::builder()
+            .max_quotes_per_second(1)
+            .build();
+        let service = CompositeStreamingQuoteService::new(config);
+        let mm_id = CounterpartyId::new("mm-1");
+        service.register_mm(mm_id.clone());
+
+        let quote1 = create_test_quote("mm-1", 50000.0, 50010.0);
+        let quote2 = create_test_quote("mm-1", 50005.0, 50015.0);
+
+        let result1 = service.receive_quote(quote1).await;
+        assert!(matches!(result1, StreamingQuoteResult::Accepted { .. }));
+
+        let result2 = service.receive_quote(quote2).await;
+        assert!(matches!(
+            result2,
+            StreamingQuoteResult::Rejected {
+                reason: StreamingQuoteRejectReason::RateLimitExceeded { .. }
+            }
+        ));
+
+        sleep(Duration::from_millis(1100));
+
+        let quote3 = create_test_quote("mm-1", 50010.0, 50020.0);
+        let result3 = service.receive_quote(quote3).await;
+        assert!(matches!(result3, StreamingQuoteResult::Accepted { .. }));
     }
 }
