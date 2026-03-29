@@ -30,12 +30,20 @@ mod proptest_roundtrip;
 pub mod traits;
 pub mod types;
 
-// NOTE: IronSBE codegen is available but currently generates code with issues
-// (empty enums). The generated module is disabled until IronSBE codegen is fixed.
-// For now, we use ironsbe-core types directly in our custom implementation.
+// NOTE: IronSBE v0.2.0 codegen generates code with compilation errors when
+// multiple messages use the same repeating group name (e.g., "quotes" group
+// in CreateRfqResponse, GetRfqResponse, CancelRfqResponse). This causes
+// duplicate type definitions for QuotesGroupDecoder/QuotesEntryDecoder,
+// resulting in 65 compilation errors.
 //
-// To enable generated code in the future, uncomment:
-// #[allow(unsafe_code, clippy::transmute_int_to_bool)]
+// Issue reported: https://github.com/joaquinbejar/IronSBE/issues/5
+//
+// The generated module is disabled until IronSBE fixes repeating group
+// namespacing. For now, we use custom codec implementations in the codecs module.
+//
+// To enable when fixed:
+// #[allow(unsafe_code, clippy::transmute_int_to_bool, clippy::all)]
+// #[allow(dead_code, unused_imports, non_camel_case_types)]
 // pub mod generated {
 //     include!(concat!(env!("OUT_DIR"), "/sbe_generated.rs"));
 // }
