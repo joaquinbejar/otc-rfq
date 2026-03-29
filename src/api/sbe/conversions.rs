@@ -5,9 +5,8 @@
 //! This module provides bidirectional conversions following the same pattern
 //! as gRPC conversions in `src/api/grpc/conversions.rs`.
 
-use super::error::{SbeApiError, SbeApiResult};
 use super::types::*;
-use crate::domain::value_objects::{RfqId, QuoteId};
+use crate::domain::value_objects::{QuoteId, RfqId};
 
 // ============================================================================
 // Request Conversions
@@ -110,7 +109,7 @@ mod tests {
     fn get_rfq_request_domain_conversion() {
         let rfq_id = RfqId::new_v4();
         let request_id = uuid::Uuid::new_v4();
-        
+
         let request = GetRfqRequest::from_domain(request_id, rfq_id);
         assert_eq!(request.to_domain_rfq_id(), rfq_id);
     }
@@ -119,7 +118,7 @@ mod tests {
     fn execute_trade_request_domain_conversion() {
         let rfq_id = RfqId::new_v4();
         let quote_id = QuoteId::new_v4();
-        
+
         let request = ExecuteTradeRequest::from_domain(rfq_id, quote_id);
         assert_eq!(request.to_domain_rfq_id(), rfq_id);
         assert_eq!(request.to_domain_quote_id(), quote_id);
