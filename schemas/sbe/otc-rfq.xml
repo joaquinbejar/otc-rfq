@@ -401,7 +401,7 @@
         
         Response containing the created RFQ with all details.
         
-        Fixed block length: 69 bytes
+        Fixed block length: 84 bytes
         - requestId: 16 bytes (UUID)
         - rfqId: 16 bytes (UUID)
         - side: 1 byte (orderSide)
@@ -422,9 +422,9 @@
         - baseAsset: varString
         - quoteAsset: varString
     -->
-    <sbe:message name="CreateRfqResponse" id="21" blockLength="69" 
+    <sbe:message name="CreateRfqResponse" id="21" blockLength="84" 
                  description="Response containing the created RFQ">
-        <!-- Fixed fields (69 bytes) -->
+        <!-- Fixed fields (84 bytes) -->
         <field name="requestId" id="1" type="uuid" offset="0" 
                description="Request correlation ID (echoed from request)"/>
         <field name="rfqId" id="2" type="uuid" offset="16" 
@@ -504,7 +504,7 @@
         
         Response containing the requested RFQ.
         
-        Fixed block length: 69 bytes
+        Fixed block length: 84 bytes
         - requestId: 16 bytes (UUID)
         - rfqId: 16 bytes (UUID)
         - side: 1 byte (orderSide)
@@ -525,9 +525,9 @@
         - baseAsset: varString
         - quoteAsset: varString
     -->
-    <sbe:message name="GetRfqResponse" id="23" blockLength="69" 
+    <sbe:message name="GetRfqResponse" id="23" blockLength="84" 
                  description="Response containing the requested RFQ">
-        <!-- Fixed fields (69 bytes) -->
+        <!-- Fixed fields (84 bytes) -->
         <field name="requestId" id="1" type="uuid" offset="0" 
                description="Request correlation ID (echoed from request)"/>
         <field name="rfqId" id="2" type="uuid" offset="16" 
@@ -614,7 +614,7 @@
         
         Response containing the cancelled RFQ.
         
-        Fixed block length: 69 bytes
+        Fixed block length: 84 bytes
         - requestId: 16 bytes (UUID)
         - rfqId: 16 bytes (UUID)
         - side: 1 byte (orderSide)
@@ -635,9 +635,9 @@
         - baseAsset: varString
         - quoteAsset: varString
     -->
-    <sbe:message name="CancelRfqResponse" id="25" blockLength="69" 
+    <sbe:message name="CancelRfqResponse" id="25" blockLength="84" 
                  description="Response containing the cancelled RFQ">
-        <!-- Fixed fields (69 bytes) -->
+        <!-- Fixed fields (84 bytes) -->
         <field name="requestId" id="1" type="uuid" offset="0" 
                description="Request correlation ID (echoed from request)"/>
         <field name="rfqId" id="2" type="uuid" offset="16" 
