@@ -21,7 +21,7 @@
 //! ## Generated Code
 //!
 //! The `generated` module is currently **disabled** due to an IronSBE v0.2.0 bug
-//! with repeating group namespacing (see issue https://github.com/joaquinbejar/IronSBE/issues/5).
+//! with repeating group namespacing (see issue <https://github.com/joaquinbejar/IronSBE/issues/5>).
 //! When enabled, it will contain IronSBE-generated encoders and decoders from
 //! `schemas/sbe/otc-rfq.xml`, providing zero-copy access to SBE messages.
 //!
