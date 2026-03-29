@@ -770,6 +770,723 @@ impl SbeDecode for UnsubscribeRequest {
     }
 }
 
+/// CancelRfqRequest - Cancel an RFQ.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CancelRfqRequest {
+    /// Request correlation ID.
+    pub request_id: Uuid,
+    /// RFQ identifier to cancel.
+    pub rfq_id: Uuid,
+    /// Cancellation reason.
+    pub reason: String,
+}
+
+impl CancelRfqRequest {
+    /// Block length for CancelRfqRequest (fixed fields only).
+    pub const BLOCK_LENGTH: u16 = 32;
+}
+
+impl SbeEncode for CancelRfqRequest {
+    fn encoded_size(&self) -> usize {
+        MESSAGE_HEADER_SIZE
+            + Self::BLOCK_LENGTH as usize
+            + var_string_size(&self.reason)
+    }
+
+    fn encode(&self, buffer: &mut [u8]) -> SbeResult<usize> {
+        let size = self.encoded_size();
+        if buffer.len() < size {
+            return Err(SbeError::BufferTooSmall {
+                needed: size,
+                available: buffer.len(),
+            });
+        }
+
+        let mut offset: usize = 0;
+
+        // Header
+        encode_header(buffer, Self::BLOCK_LENGTH, CANCEL_RFQ_REQUEST_TEMPLATE_ID)?;
+        offset = offset.checked_add(MESSAGE_HEADER_SIZE)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        // requestId
+        let request_uuid = SbeUuid::from_uuid(self.request_id);
+        request_uuid.encode(&mut buffer[offset..])?;
+        offset = offset.checked_add(SbeUuid::SIZE)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        // rfqId
+        let rfq_uuid = SbeUuid::from_uuid(self.rfq_id);
+        rfq_uuid.encode(&mut buffer[offset..])?;
+        offset = offset.checked_add(SbeUuid::SIZE)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        // reason (variable)
+        let reason_size = encode_var_string(&self.reason, &mut buffer[offset..])?;
+        offset = offset.checked_add(reason_size)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        Ok(offset)
+    }
+}
+
+impl SbeDecode for CancelRfqRequest {
+    fn decode(buffer: &[u8]) -> SbeResult<Self> {
+        let (_block_length, template_id, _schema_id, _version) = decode_header(buffer)?;
+
+        if template_id != CANCEL_RFQ_REQUEST_TEMPLATE_ID {
+            return Err(SbeError::UnknownTemplateId(template_id));
+        }
+
+        let mut offset: usize = MESSAGE_HEADER_SIZE;
+
+        // requestId
+        let request_uuid = SbeUuid::decode(&buffer[offset..])?;
+        offset = offset.checked_add(SbeUuid::SIZE)
+            .ok_or_else(|| SbeError::Overflow)?;
+
+        // rfqId
+        let rfq_uuid = SbeUuid::decode(&buffer[offset..])?;
+        offset = offset.checked_add(SbeUuid::SIZE)
+            .ok_or_else(|| SbeError::Overflow)?;
+
+        // reason (variable)
+        let (reason, _reason_size) = decode_var_string(&buffer[offset..])?;
+
+        Ok(Self {
+            request_id: request_uuid.to_uuid(),
+            rfq_id: rfq_uuid.to_uuid(),
+            reason,
+        })
+    }
+}
+
+// ============================================================================
+// Response Types
+// ============================================================================
+
+/// ExecuteTradeResponse - Response containing executed trade details.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecuteTradeResponse {
+    /// Trade identifier.
+    pub trade_id: Uuid,
+    /// RFQ identifier.
+    pub rfq_id: Uuid,
+    /// Executed quote identifier.
+    pub quote_id: Uuid,
+    /// Execution price.
+    pub price: Price,
+    /// Executed quantity.
+    pub quantity: Quantity,
+    /// Trade execution time.
+    pub created_at: Timestamp,
+    /// Venue identifier.
+    pub venue_id: String,
+    /// Venue execution reference ID.
+    pub venue_execution_ref: String,
+}
+
+impl ExecuteTradeResponse {
+    /// Block length for ExecuteTradeResponse (fixed fields only).
+    pub const BLOCK_LENGTH: u16 = 74;
+}
+
+impl SbeEncode for ExecuteTradeResponse {
+    fn encoded_size(&self) -> usize {
+        MESSAGE_HEADER_SIZE
+            + Self::BLOCK_LENGTH as usize
+            + var_string_size(&self.venue_id)
+            + var_string_size(&self.venue_execution_ref)
+    }
+
+    fn encode(&self, buffer: &mut [u8]) -> SbeResult<usize> {
+        let size = self.encoded_size();
+        if buffer.len() < size {
+            return Err(SbeError::BufferTooSmall {
+                needed: size,
+                available: buffer.len(),
+            });
+        }
+
+        let mut offset: usize = 0;
+
+        // Header
+        encode_header(buffer, Self::BLOCK_LENGTH, EXECUTE_TRADE_RESPONSE_TEMPLATE_ID)?;
+        offset = offset.checked_add(MESSAGE_HEADER_SIZE)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        // tradeId
+        let trade_uuid = SbeUuid::from_uuid(self.trade_id);
+        trade_uuid.encode(&mut buffer[offset..])?;
+        offset = offset.checked_add(SbeUuid::SIZE)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        // rfqId
+        let rfq_uuid = SbeUuid::from_uuid(self.rfq_id);
+        rfq_uuid.encode(&mut buffer[offset..])?;
+        offset = offset.checked_add(SbeUuid::SIZE)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        // quoteId
+        let quote_uuid = SbeUuid::from_uuid(self.quote_id);
+        quote_uuid.encode(&mut buffer[offset..])?;
+        offset = offset.checked_add(SbeUuid::SIZE)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        // price
+        let price_decimal = SbeDecimal::from_decimal(self.price.get());
+        price_decimal.encode(&mut buffer[offset..])?;
+        offset = offset.checked_add(SbeDecimal::SIZE)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        // quantity
+        let qty_decimal = SbeDecimal::from_decimal(self.quantity.get());
+        qty_decimal.encode(&mut buffer[offset..])?;
+        offset = offset.checked_add(SbeDecimal::SIZE)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        // createdAt (nanoseconds)
+        let created_nanos = self.created_at.timestamp_nanos().unwrap_or(0) as u64;
+        buffer[offset..offset.checked_add(8).ok_or_else(|| SbeError::Overflow)?]
+            .copy_from_slice(&created_nanos.to_le_bytes());
+        offset = offset.checked_add(8)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        // Variable fields
+        let venue_size = encode_var_string(&self.venue_id, &mut buffer[offset..])?;
+        offset = offset.checked_add(venue_size)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        let ref_size = encode_var_string(&self.venue_execution_ref, &mut buffer[offset..])?;
+        offset = offset.checked_add(ref_size)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        Ok(offset)
+    }
+}
+
+impl SbeDecode for ExecuteTradeResponse {
+    fn decode(buffer: &[u8]) -> SbeResult<Self> {
+        let (_block_length, template_id, _schema_id, _version) = decode_header(buffer)?;
+
+        if template_id != EXECUTE_TRADE_RESPONSE_TEMPLATE_ID {
+            return Err(SbeError::UnknownTemplateId(template_id));
+        }
+
+        let mut offset: usize = MESSAGE_HEADER_SIZE;
+
+        // tradeId
+        let trade_uuid = SbeUuid::decode(&buffer[offset..])?;
+        offset = offset.checked_add(SbeUuid::SIZE)
+            .ok_or_else(|| SbeError::Overflow)?;
+
+        // rfqId
+        let rfq_uuid = SbeUuid::decode(&buffer[offset..])?;
+        offset = offset.checked_add(SbeUuid::SIZE)
+            .ok_or_else(|| SbeError::Overflow)?;
+
+        // quoteId
+        let quote_uuid = SbeUuid::decode(&buffer[offset..])?;
+        offset = offset.checked_add(SbeUuid::SIZE)
+            .ok_or_else(|| SbeError::Overflow)?;
+
+        // price
+        let price_sbe = SbeDecimal::decode(&buffer[offset..])?;
+        let price_decimal = price_sbe.to_decimal()?;
+        let price = Price::from_decimal(price_decimal)
+            .map_err(|e| SbeError::InvalidFieldValue(format!("invalid price: {}", e)))?;
+        offset = offset.checked_add(SbeDecimal::SIZE)
+            .ok_or_else(|| SbeError::Overflow)?;
+
+        // quantity
+        let qty_sbe = SbeDecimal::decode(&buffer[offset..])?;
+        let qty_decimal = qty_sbe.to_decimal()?;
+        let quantity = Quantity::from_decimal(qty_decimal)
+            .map_err(|e| SbeError::InvalidFieldValue(format!("invalid quantity: {}", e)))?;
+        offset = offset.checked_add(SbeDecimal::SIZE)
+            .ok_or_else(|| SbeError::Overflow)?;
+
+        // createdAt
+        let created_bytes = buffer.get(offset..offset.checked_add(8).ok_or_else(|| SbeError::Overflow)?)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: offset + 8, available: buffer.len() })?;
+        let created_nanos = u64::from_le_bytes(created_bytes.try_into()
+            .map_err(|_| SbeError::InvalidFieldValue("invalid timestamp".to_string()))?);
+        let created_at = Timestamp::from_nanos(created_nanos as i64)
+            .ok_or_else(|| SbeError::InvalidTimestamp("timestamp out of range".to_string()))?;
+        offset = offset.checked_add(8)
+            .ok_or_else(|| SbeError::Overflow)?;
+
+        // Variable fields
+        let (venue_id, venue_size) = decode_var_string(&buffer[offset..])?;
+        offset = offset.checked_add(venue_size)
+            .ok_or_else(|| SbeError::Overflow)?;
+
+        let (venue_execution_ref, _ref_size) = decode_var_string(&buffer[offset..])?;
+
+        Ok(Self {
+            trade_id: trade_uuid.to_uuid(),
+            rfq_id: rfq_uuid.to_uuid(),
+            quote_id: quote_uuid.to_uuid(),
+            price,
+            quantity,
+            created_at,
+            venue_id,
+            venue_execution_ref,
+        })
+    }
+}
+
+/// QuoteUpdate - Streaming quote update.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuoteUpdate {
+    /// Quote identifier.
+    pub quote_id: Uuid,
+    /// RFQ identifier.
+    pub rfq_id: Uuid,
+    /// Quoted price.
+    pub price: Price,
+    /// Quoted quantity.
+    pub quantity: Quantity,
+    /// Venue commission.
+    pub commission: rust_decimal::Decimal,
+    /// Quote validity expiration.
+    pub valid_until: Timestamp,
+    /// Quote creation time.
+    pub created_at: Timestamp,
+    /// Type of venue.
+    pub venue_type: VenueType,
+    /// Whether this is the final quote.
+    pub is_final: bool,
+    /// Venue identifier.
+    pub venue_id: String,
+}
+
+impl QuoteUpdate {
+    /// Block length for QuoteUpdate (fixed fields only).
+    pub const BLOCK_LENGTH: u16 = 77;
+}
+
+impl SbeEncode for QuoteUpdate {
+    fn encoded_size(&self) -> usize {
+        MESSAGE_HEADER_SIZE
+            + Self::BLOCK_LENGTH as usize
+            + var_string_size(&self.venue_id)
+    }
+
+    fn encode(&self, buffer: &mut [u8]) -> SbeResult<usize> {
+        let size = self.encoded_size();
+        if buffer.len() < size {
+            return Err(SbeError::BufferTooSmall {
+                needed: size,
+                available: buffer.len(),
+            });
+        }
+
+        let mut offset: usize = 0;
+
+        // Header
+        encode_header(buffer, Self::BLOCK_LENGTH, QUOTE_UPDATE_TEMPLATE_ID)?;
+        offset = offset.checked_add(MESSAGE_HEADER_SIZE)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        // quoteId
+        let quote_uuid = SbeUuid::from_uuid(self.quote_id);
+        quote_uuid.encode(&mut buffer[offset..])?;
+        offset = offset.checked_add(SbeUuid::SIZE)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        // rfqId
+        let rfq_uuid = SbeUuid::from_uuid(self.rfq_id);
+        rfq_uuid.encode(&mut buffer[offset..])?;
+        offset = offset.checked_add(SbeUuid::SIZE)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        // price
+        let price_decimal = SbeDecimal::from_decimal(self.price.get());
+        price_decimal.encode(&mut buffer[offset..])?;
+        offset = offset.checked_add(SbeDecimal::SIZE)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        // quantity
+        let qty_decimal = SbeDecimal::from_decimal(self.quantity.get());
+        qty_decimal.encode(&mut buffer[offset..])?;
+        offset = offset.checked_add(SbeDecimal::SIZE)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        // commission
+        let commission_decimal = SbeDecimal::from_decimal(self.commission);
+        commission_decimal.encode(&mut buffer[offset..])?;
+        offset = offset.checked_add(SbeDecimal::SIZE)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        // validUntil (nanoseconds)
+        let valid_nanos = self.valid_until.timestamp_nanos().unwrap_or(0) as u64;
+        buffer[offset..offset.checked_add(8).ok_or_else(|| SbeError::Overflow)?]
+            .copy_from_slice(&valid_nanos.to_le_bytes());
+        offset = offset.checked_add(8)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        // createdAt (nanoseconds)
+        let created_nanos = self.created_at.timestamp_nanos().unwrap_or(0) as u64;
+        buffer[offset..offset.checked_add(8).ok_or_else(|| SbeError::Overflow)?]
+            .copy_from_slice(&created_nanos.to_le_bytes());
+        offset = offset.checked_add(8)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        // venueType
+        buffer[offset] = encode_venue_type(self.venue_type);
+        offset = offset.checked_add(1)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        // isFinal
+        buffer[offset] = if self.is_final { 1 } else { 0 };
+        offset = offset.checked_add(1)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        // venueId (variable)
+        let venue_size = encode_var_string(&self.venue_id, &mut buffer[offset..])?;
+        offset = offset.checked_add(venue_size)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        Ok(offset)
+    }
+}
+
+impl SbeDecode for QuoteUpdate {
+    fn decode(buffer: &[u8]) -> SbeResult<Self> {
+        let (_block_length, template_id, _schema_id, _version) = decode_header(buffer)?;
+
+        if template_id != QUOTE_UPDATE_TEMPLATE_ID {
+            return Err(SbeError::UnknownTemplateId(template_id));
+        }
+
+        let mut offset: usize = MESSAGE_HEADER_SIZE;
+
+        // quoteId
+        let quote_uuid = SbeUuid::decode(&buffer[offset..])?;
+        offset = offset.checked_add(SbeUuid::SIZE)
+            .ok_or_else(|| SbeError::Overflow)?;
+
+        // rfqId
+        let rfq_uuid = SbeUuid::decode(&buffer[offset..])?;
+        offset = offset.checked_add(SbeUuid::SIZE)
+            .ok_or_else(|| SbeError::Overflow)?;
+
+        // price
+        let price_sbe = SbeDecimal::decode(&buffer[offset..])?;
+        let price_decimal = price_sbe.to_decimal()?;
+        let price = Price::from_decimal(price_decimal)
+            .map_err(|e| SbeError::InvalidFieldValue(format!("invalid price: {}", e)))?;
+        offset = offset.checked_add(SbeDecimal::SIZE)
+            .ok_or_else(|| SbeError::Overflow)?;
+
+        // quantity
+        let qty_sbe = SbeDecimal::decode(&buffer[offset..])?;
+        let qty_decimal = qty_sbe.to_decimal()?;
+        let quantity = Quantity::from_decimal(qty_decimal)
+            .map_err(|e| SbeError::InvalidFieldValue(format!("invalid quantity: {}", e)))?;
+        offset = offset.checked_add(SbeDecimal::SIZE)
+            .ok_or_else(|| SbeError::Overflow)?;
+
+        // commission
+        let commission_sbe = SbeDecimal::decode(&buffer[offset..])?;
+        let commission = commission_sbe.to_decimal()?;
+        offset = offset.checked_add(SbeDecimal::SIZE)
+            .ok_or_else(|| SbeError::Overflow)?;
+
+        // validUntil
+        let valid_bytes = buffer.get(offset..offset.checked_add(8).ok_or_else(|| SbeError::Overflow)?)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: offset + 8, available: buffer.len() })?;
+        let valid_nanos = u64::from_le_bytes(valid_bytes.try_into()
+            .map_err(|_| SbeError::InvalidFieldValue("invalid timestamp".to_string()))?);
+        let valid_until = Timestamp::from_nanos(valid_nanos as i64)
+            .ok_or_else(|| SbeError::InvalidTimestamp("timestamp out of range".to_string()))?;
+        offset = offset.checked_add(8)
+            .ok_or_else(|| SbeError::Overflow)?;
+
+        // createdAt
+        let created_bytes = buffer.get(offset..offset.checked_add(8).ok_or_else(|| SbeError::Overflow)?)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: offset + 8, available: buffer.len() })?;
+        let created_nanos = u64::from_le_bytes(created_bytes.try_into()
+            .map_err(|_| SbeError::InvalidFieldValue("invalid timestamp".to_string()))?);
+        let created_at = Timestamp::from_nanos(created_nanos as i64)
+            .ok_or_else(|| SbeError::InvalidTimestamp("timestamp out of range".to_string()))?;
+        offset = offset.checked_add(8)
+            .ok_or_else(|| SbeError::Overflow)?;
+
+        // venueType
+        let venue_type = decode_venue_type(buffer[offset])?;
+        offset = offset.checked_add(1)
+            .ok_or_else(|| SbeError::Overflow)?;
+
+        // isFinal
+        let is_final = buffer[offset] != 0;
+        offset = offset.checked_add(1)
+            .ok_or_else(|| SbeError::Overflow)?;
+
+        // venueId (variable)
+        let (venue_id, _venue_size) = decode_var_string(&buffer[offset..])?;
+
+        Ok(Self {
+            quote_id: quote_uuid.to_uuid(),
+            rfq_id: rfq_uuid.to_uuid(),
+            price,
+            quantity,
+            commission,
+            valid_until,
+            created_at,
+            venue_type,
+            is_final,
+            venue_id,
+        })
+    }
+}
+
+/// RfqStatusUpdate - Streaming RFQ status update.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RfqStatusUpdate {
+    /// RFQ identifier.
+    pub rfq_id: Uuid,
+    /// Previous RFQ state.
+    pub previous_state: RfqState,
+    /// Current RFQ state.
+    pub current_state: RfqState,
+    /// State transition timestamp.
+    pub timestamp: Timestamp,
+    /// Status message.
+    pub message: String,
+}
+
+impl RfqStatusUpdate {
+    /// Block length for RfqStatusUpdate (fixed fields only).
+    pub const BLOCK_LENGTH: u16 = 26;
+}
+
+impl SbeEncode for RfqStatusUpdate {
+    fn encoded_size(&self) -> usize {
+        MESSAGE_HEADER_SIZE
+            + Self::BLOCK_LENGTH as usize
+            + var_string_size(&self.message)
+    }
+
+    fn encode(&self, buffer: &mut [u8]) -> SbeResult<usize> {
+        let size = self.encoded_size();
+        if buffer.len() < size {
+            return Err(SbeError::BufferTooSmall {
+                needed: size,
+                available: buffer.len(),
+            });
+        }
+
+        let mut offset: usize = 0;
+
+        // Header
+        encode_header(buffer, Self::BLOCK_LENGTH, RFQ_STATUS_UPDATE_TEMPLATE_ID)?;
+        offset = offset.checked_add(MESSAGE_HEADER_SIZE)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        // rfqId
+        let rfq_uuid = SbeUuid::from_uuid(self.rfq_id);
+        rfq_uuid.encode(&mut buffer[offset..])?;
+        offset = offset.checked_add(SbeUuid::SIZE)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        // previousState
+        buffer[offset] = encode_rfq_state(self.previous_state);
+        offset = offset.checked_add(1)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        // currentState
+        buffer[offset] = encode_rfq_state(self.current_state);
+        offset = offset.checked_add(1)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        // timestamp (nanoseconds)
+        let timestamp_nanos = self.timestamp.timestamp_nanos().unwrap_or(0) as u64;
+        buffer[offset..offset.checked_add(8).ok_or_else(|| SbeError::Overflow)?]
+            .copy_from_slice(&timestamp_nanos.to_le_bytes());
+        offset = offset.checked_add(8)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        // message (variable)
+        let msg_size = encode_var_string(&self.message, &mut buffer[offset..])?;
+        offset = offset.checked_add(msg_size)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        Ok(offset)
+    }
+}
+
+impl SbeDecode for RfqStatusUpdate {
+    fn decode(buffer: &[u8]) -> SbeResult<Self> {
+        let (_block_length, template_id, _schema_id, _version) = decode_header(buffer)?;
+
+        if template_id != RFQ_STATUS_UPDATE_TEMPLATE_ID {
+            return Err(SbeError::UnknownTemplateId(template_id));
+        }
+
+        let mut offset: usize = MESSAGE_HEADER_SIZE;
+
+        // rfqId
+        let rfq_uuid = SbeUuid::decode(&buffer[offset..])?;
+        offset = offset.checked_add(SbeUuid::SIZE)
+            .ok_or_else(|| SbeError::Overflow)?;
+
+        // previousState
+        let previous_state = decode_rfq_state(buffer[offset])?;
+        offset = offset.checked_add(1)
+            .ok_or_else(|| SbeError::Overflow)?;
+
+        // currentState
+        let current_state = decode_rfq_state(buffer[offset])?;
+        offset = offset.checked_add(1)
+            .ok_or_else(|| SbeError::Overflow)?;
+
+        // timestamp
+        let ts_bytes = buffer.get(offset..offset.checked_add(8).ok_or_else(|| SbeError::Overflow)?)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: offset + 8, available: buffer.len() })?;
+        let ts_nanos = u64::from_le_bytes(ts_bytes.try_into()
+            .map_err(|_| SbeError::InvalidFieldValue("invalid timestamp".to_string()))?);
+        let timestamp = Timestamp::from_nanos(ts_nanos as i64)
+            .ok_or_else(|| SbeError::InvalidTimestamp("timestamp out of range".to_string()))?;
+        offset = offset.checked_add(8)
+            .ok_or_else(|| SbeError::Overflow)?;
+
+        // message (variable)
+        let (message, _msg_size) = decode_var_string(&buffer[offset..])?;
+
+        Ok(Self {
+            rfq_id: rfq_uuid.to_uuid(),
+            previous_state,
+            current_state,
+            timestamp,
+            message,
+        })
+    }
+}
+
+/// ErrorResponse - Error response for failed operations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ErrorResponse {
+    /// Request correlation ID.
+    pub request_id: Uuid,
+    /// RFQ identifier (zeroed if error not RFQ-specific).
+    pub rfq_id: Uuid,
+    /// Error code.
+    pub code: i32,
+    /// Human-readable error message.
+    pub message: String,
+    /// JSON-encoded error metadata.
+    pub metadata: String,
+}
+
+impl ErrorResponse {
+    /// Block length for ErrorResponse (fixed fields only).
+    pub const BLOCK_LENGTH: u16 = 36;
+}
+
+impl SbeEncode for ErrorResponse {
+    fn encoded_size(&self) -> usize {
+        MESSAGE_HEADER_SIZE
+            + Self::BLOCK_LENGTH as usize
+            + var_string_size(&self.message)
+            + var_string_size(&self.metadata)
+    }
+
+    fn encode(&self, buffer: &mut [u8]) -> SbeResult<usize> {
+        let size = self.encoded_size();
+        if buffer.len() < size {
+            return Err(SbeError::BufferTooSmall {
+                needed: size,
+                available: buffer.len(),
+            });
+        }
+
+        let mut offset: usize = 0;
+
+        // Header
+        encode_header(buffer, Self::BLOCK_LENGTH, ERROR_RESPONSE_TEMPLATE_ID)?;
+        offset = offset.checked_add(MESSAGE_HEADER_SIZE)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        // requestId
+        let request_uuid = SbeUuid::from_uuid(self.request_id);
+        request_uuid.encode(&mut buffer[offset..])?;
+        offset = offset.checked_add(SbeUuid::SIZE)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        // rfqId
+        let rfq_uuid = SbeUuid::from_uuid(self.rfq_id);
+        rfq_uuid.encode(&mut buffer[offset..])?;
+        offset = offset.checked_add(SbeUuid::SIZE)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        // code
+        buffer[offset..offset.checked_add(4).ok_or_else(|| SbeError::Overflow)?]
+            .copy_from_slice(&self.code.to_le_bytes());
+        offset = offset.checked_add(4)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        // message (variable)
+        let msg_size = encode_var_string(&self.message, &mut buffer[offset..])?;
+        offset = offset.checked_add(msg_size)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        // metadata (variable)
+        let meta_size = encode_var_string(&self.metadata, &mut buffer[offset..])?;
+        offset = offset.checked_add(meta_size)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: size, available: buffer.len() })?;
+
+        Ok(offset)
+    }
+}
+
+impl SbeDecode for ErrorResponse {
+    fn decode(buffer: &[u8]) -> SbeResult<Self> {
+        let (_block_length, template_id, _schema_id, _version) = decode_header(buffer)?;
+
+        if template_id != ERROR_RESPONSE_TEMPLATE_ID {
+            return Err(SbeError::UnknownTemplateId(template_id));
+        }
+
+        let mut offset: usize = MESSAGE_HEADER_SIZE;
+
+        // requestId
+        let request_uuid = SbeUuid::decode(&buffer[offset..])?;
+        offset = offset.checked_add(SbeUuid::SIZE)
+            .ok_or_else(|| SbeError::Overflow)?;
+
+        // rfqId
+        let rfq_uuid = SbeUuid::decode(&buffer[offset..])?;
+        offset = offset.checked_add(SbeUuid::SIZE)
+            .ok_or_else(|| SbeError::Overflow)?;
+
+        // code
+        let code_bytes = buffer.get(offset..offset.checked_add(4).ok_or_else(|| SbeError::Overflow)?)
+            .ok_or_else(|| SbeError::BufferTooSmall { needed: offset + 4, available: buffer.len() })?;
+        let code = i32::from_le_bytes(code_bytes.try_into()
+            .map_err(|_| SbeError::InvalidFieldValue("invalid error code".to_string()))?);
+        offset = offset.checked_add(4)
+            .ok_or_else(|| SbeError::Overflow)?;
+
+        // message (variable)
+        let (message, msg_size) = decode_var_string(&buffer[offset..])?;
+        offset = offset.checked_add(msg_size)
+            .ok_or_else(|| SbeError::Overflow)?;
+
+        // metadata (variable)
+        let (metadata, _meta_size) = decode_var_string(&buffer[offset..])?;
+
+        Ok(Self {
+            request_id: request_uuid.to_uuid(),
+            rfq_id: rfq_uuid.to_uuid(),
+            code,
+            message,
+            metadata,
+        })
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
