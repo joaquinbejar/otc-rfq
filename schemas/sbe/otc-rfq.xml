@@ -887,17 +887,23 @@
         
         Error response for failed operations.
         
-        Fixed block length: 4 bytes
+        Fixed block length: 36 bytes
+        - requestId: 16 bytes (UUID)
+        - rfqId: 16 bytes (UUID, zeroed if error not RFQ-specific)
         - code: 4 bytes (int32)
         
         Variable fields:
         - message: varString (error message)
         - metadata: varString (JSON-encoded error metadata)
     -->
-    <sbe:message name="ErrorResponse" id="50" blockLength="4" 
+    <sbe:message name="ErrorResponse" id="50" blockLength="36" 
                  description="Error response for failed operations">
-        <!-- Fixed fields (4 bytes) -->
-        <field name="code" id="1" type="int32" offset="0" 
+        <!-- Fixed fields (36 bytes) -->
+        <field name="requestId" id="1" type="uuid" offset="0" 
+               description="Request correlation ID (echoed from failed request)"/>
+        <field name="rfqId" id="2" type="uuid" offset="16" 
+               description="RFQ identifier (zeroed if error not RFQ-specific)"/>
+        <field name="code" id="3" type="int32" offset="32" 
                description="Error code"/>
         
         <!-- Variable fields -->
