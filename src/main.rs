@@ -73,10 +73,12 @@ async fn main() -> anyhow::Result<()> {
         Some(Arc::clone(&mm_performance_tracker)),
         shutdown_rx.clone(),
     );
+    let sbe_handle = start_sbe_server(Arc::clone(&rfq_repository), shutdown_rx.clone());
 
     info!(
         grpc_addr = %format!("{}:{}", config.grpc.host, config.grpc.port),
         rest_addr = %format!("{}:{}", config.rest.host, config.rest.port),
+        sbe_addr = "0.0.0.0:50052",
         "OTC RFQ Engine started successfully"
     );
 
@@ -91,7 +93,7 @@ async fn main() -> anyhow::Result<()> {
     // Wait for servers to finish with timeout
     let shutdown_timeout = tokio::time::Duration::from_secs(30);
     let shutdown_result = tokio::time::timeout(shutdown_timeout, async {
-        let _ = tokio::join!(grpc_handle, rest_handle);
+        let _ = tokio::join!(grpc_handle, rest_handle, sbe_handle);
     })
     .await;
 
@@ -246,6 +248,40 @@ fn start_rest_server(
         }
 
         info!("REST server stopped");
+    })
+}
+
+/// Starts the SBE TCP server.
+fn start_sbe_server(
+    rfq_repository: Arc<dyn otc_rfq::application::use_cases::create_rfq::RfqRepository>,
+    shutdown_rx: watch::Receiver<bool>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        use otc_rfq::api::sbe::server::{AppState, SbeConfig, SbeServer};
+
+        let addr: std::net::SocketAddr = match "0.0.0.0:50052".parse() {
+            Ok(a) => a,
+            Err(e) => {
+                error!(error = %e, "Invalid SBE server address");
+                return;
+            }
+        };
+
+        let listener = match tokio::net::TcpListener::bind(addr).await {
+            Ok(l) => l,
+            Err(e) => {
+                error!(error = %e, "Failed to bind SBE server");
+                return;
+            }
+        };
+
+        let state = Arc::new(AppState { rfq_repository });
+        let config = SbeConfig::default();
+        let server = SbeServer::new(listener, state, shutdown_rx, config);
+
+        if let Err(e) = server.run().await {
+            error!(error = %e, "SBE server error");
+        }
     })
 }
 

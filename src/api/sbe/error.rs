@@ -44,6 +44,31 @@ pub enum SbeApiError {
     /// Domain error during conversion.
     #[error("domain error: {0}")]
     Domain(String),
+
+    /// IO error during transport.
+    #[error("io error: {0}")]
+    Io(#[from] std::io::Error),
+
+    /// Frame size exceeds maximum.
+    #[error("frame too large: {size} bytes exceeds max {max} bytes")]
+    FrameTooLarge {
+        /// Actual frame size.
+        size: usize,
+        /// Maximum allowed size.
+        max: usize,
+    },
+
+    /// Connection closed by peer.
+    #[error("connection closed")]
+    ConnectionClosed,
+
+    /// Operation timeout.
+    #[error("timeout")]
+    Timeout,
+
+    /// Template not yet implemented.
+    #[error("template {0} not implemented")]
+    NotImplemented(u16),
 }
 
 /// Result type for SBE API operations.
