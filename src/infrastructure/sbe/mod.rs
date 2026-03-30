@@ -20,12 +20,17 @@
 //!
 //! ## Generated Code
 //!
-//! The `generated` module is currently **disabled** due to an IronSBE v0.2.0 bug
-//! with repeating group namespacing (see issue <https://github.com/joaquinbejar/IronSBE/issues/5>).
-//! When enabled, it will contain IronSBE-generated encoders and decoders from
-//! `schemas/sbe/otc-rfq.xml`, providing zero-copy access to SBE messages.
+//! The `generated` module contains IronSBE-generated encoders and decoders from
+//! `schemas/sbe/otc-rfq.xml`, providing zero-copy access to all 18 SBE message types.
 //!
-//! For now, we use custom codec implementations in the `codecs` module.
+//! Generated with IronSBE v0.2.1 which fixes repeating group namespacing
+//! (issue <https://github.com/joaquinbejar/IronSBE/issues/5>).
+//!
+//! Generated types:
+//! - 18 message encoders/decoders (IDs 1-4, 10-11, 20-27, 30-33, 40, 50)
+//! - 5 enums: RfqState, OrderSide, VenueType, SettlementMethod, AssetClass
+//! - Composite types: Uuid, Decimal, Timestamp
+//! - Repeating group support for quotes arrays
 
 pub mod codecs;
 pub mod error;
@@ -34,24 +39,13 @@ mod proptest_roundtrip;
 pub mod traits;
 pub mod types;
 
-// TRACK: #120
-// NOTE: IronSBE v0.2.0 codegen generates code with compilation errors when
-// multiple messages use the same repeating group name (e.g., "quotes" group
-// in CreateRfqResponse, GetRfqResponse, CancelRfqResponse). This causes
-// duplicate type definitions for QuotesGroupDecoder/QuotesEntryDecoder,
-// resulting in 65 compilation errors.
-//
-// Issue reported: https://github.com/joaquinbejar/IronSBE/issues/5
-//
-// The generated module is disabled until IronSBE fixes repeating group
-// namespacing. For now, we use custom codec implementations in the codecs module.
-//
-// To enable when fixed:
-// #[allow(unsafe_code, clippy::transmute_int_to_bool, clippy::all)]
-// #[allow(dead_code, unused_imports, non_camel_case_types)]
-// pub mod generated {
-//     include!(concat!(env!("OUT_DIR"), "/sbe_generated.rs"));
-// }
+// Generated SBE types from schemas/sbe/otc-rfq.xml
+// IronSBE v0.2.1 fixes repeating group namespacing (issue #5)
+#[allow(unsafe_code, clippy::transmute_int_to_bool, clippy::all)]
+#[allow(dead_code, unused_imports, non_camel_case_types, missing_docs)]
+pub mod generated {
+    include!(concat!(env!("OUT_DIR"), "/sbe_generated.rs"));
+}
 
 pub use codecs::{
     MESSAGE_HEADER_SIZE, QUOTE_RECEIVED_TEMPLATE_ID, QuoteReceivedCodec, RFQ_CREATED_TEMPLATE_ID,
