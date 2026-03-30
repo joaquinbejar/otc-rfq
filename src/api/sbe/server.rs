@@ -17,7 +17,7 @@ use crate::infrastructure::sbe::{SbeDecode, SbeEncode};
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{watch, Semaphore};
+use tokio::sync::{Semaphore, watch};
 use tracing::{error, info, warn};
 
 /// SBE server configuration.
