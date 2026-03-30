@@ -1004,6 +1004,525 @@ impl SbeDecode for CancelRfqRequest {
 // Response Types
 // ============================================================================
 
+/// Quotes repeating group entry used in RFQ response messages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RfqQuoteEntry {
+    /// Quote identifier.
+    pub quote_id: Uuid,
+    /// Quoted price.
+    pub price: Price,
+    /// Quoted quantity.
+    pub quantity: Quantity,
+    /// Venue commission.
+    pub commission: rust_decimal::Decimal,
+    /// Quote validity expiration.
+    pub valid_until: Timestamp,
+    /// Quote creation time.
+    pub created_at: Timestamp,
+    /// Type of venue providing the quote.
+    pub venue_type: VenueType,
+    /// Venue identifier.
+    pub venue_id: String,
+}
+
+/// Generic RFQ response used by Create/Get/Cancel response messages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RfqResponse<const TEMPLATE_ID: u16> {
+    /// Request correlation ID.
+    pub request_id: Uuid,
+    /// RFQ identifier.
+    pub rfq_id: Uuid,
+    /// Order side.
+    pub side: OrderSide,
+    /// Requested quantity.
+    pub quantity: Quantity,
+    /// Current RFQ state.
+    pub state: RfqState,
+    /// RFQ expiration time.
+    pub expires_at: Timestamp,
+    /// RFQ creation time.
+    pub created_at: Timestamp,
+    /// Last update time.
+    pub updated_at: Timestamp,
+    /// Asset class.
+    pub asset_class: AssetClass,
+    /// Selected quote ID (nil if none selected).
+    pub selected_quote_id: Uuid,
+    /// Quotes repeating group.
+    pub quotes: Vec<RfqQuoteEntry>,
+    /// Client identifier.
+    pub client_id: String,
+    /// Trading symbol.
+    pub symbol: String,
+    /// Base asset.
+    pub base_asset: String,
+    /// Quote asset.
+    pub quote_asset: String,
+}
+
+/// CreateRfqResponse (Template ID 21).
+pub type CreateRfqResponse = RfqResponse<CREATE_RFQ_RESPONSE_TEMPLATE_ID>;
+/// GetRfqResponse (Template ID 23).
+pub type GetRfqResponse = RfqResponse<GET_RFQ_RESPONSE_TEMPLATE_ID>;
+/// CancelRfqResponse (Template ID 25).
+pub type CancelRfqResponse = RfqResponse<CANCEL_RFQ_RESPONSE_TEMPLATE_ID>;
+
+impl<const TEMPLATE_ID: u16> RfqResponse<TEMPLATE_ID> {
+    /// Block length for fixed root fields.
+    pub const BLOCK_LENGTH: u16 = 84;
+    /// Block length for each quote entry in repeating group.
+    pub const QUOTE_BLOCK_LENGTH: u16 = 60;
+    /// Group header encoded length (blockLength + numInGroup).
+    pub const GROUP_HEADER_SIZE: usize = 4;
+}
+
+impl<const TEMPLATE_ID: u16> SbeEncode for RfqResponse<TEMPLATE_ID> {
+    fn encoded_size(&self) -> usize {
+        let quotes_size: usize = self
+            .quotes
+            .iter()
+            .map(|q| Self::QUOTE_BLOCK_LENGTH as usize + var_string_size(&q.venue_id))
+            .sum();
+
+        MESSAGE_HEADER_SIZE
+            + Self::BLOCK_LENGTH as usize
+            + Self::GROUP_HEADER_SIZE
+            + quotes_size
+            + var_string_size(&self.client_id)
+            + var_string_size(&self.symbol)
+            + var_string_size(&self.base_asset)
+            + var_string_size(&self.quote_asset)
+    }
+
+    fn encode(&self, buffer: &mut [u8]) -> SbeResult<usize> {
+        let size = self.encoded_size();
+        if buffer.len() < size {
+            return Err(SbeError::BufferTooSmall {
+                needed: size,
+                available: buffer.len(),
+            });
+        }
+
+        let mut offset: usize = 0;
+
+        encode_header(buffer, Self::BLOCK_LENGTH, TEMPLATE_ID)?;
+        offset = offset
+            .checked_add(MESSAGE_HEADER_SIZE)
+            .ok_or(SbeError::BufferTooSmall {
+                needed: size,
+                available: buffer.len(),
+            })?;
+
+        SbeUuid::from_uuid(self.request_id).encode(&mut buffer[offset..])?;
+        offset = offset
+            .checked_add(SbeUuid::SIZE)
+            .ok_or(SbeError::BufferTooSmall {
+                needed: size,
+                available: buffer.len(),
+            })?;
+
+        SbeUuid::from_uuid(self.rfq_id).encode(&mut buffer[offset..])?;
+        offset = offset
+            .checked_add(SbeUuid::SIZE)
+            .ok_or(SbeError::BufferTooSmall {
+                needed: size,
+                available: buffer.len(),
+            })?;
+
+        buffer[offset] = encode_order_side(self.side);
+        offset = offset.checked_add(1).ok_or(SbeError::BufferTooSmall {
+            needed: size,
+            available: buffer.len(),
+        })?;
+
+        SbeDecimal::from_decimal(self.quantity.get()).encode(&mut buffer[offset..])?;
+        offset = offset
+            .checked_add(SbeDecimal::SIZE)
+            .ok_or(SbeError::BufferTooSmall {
+                needed: size,
+                available: buffer.len(),
+            })?;
+
+        buffer[offset] = encode_rfq_state(self.state);
+        offset = offset.checked_add(1).ok_or(SbeError::BufferTooSmall {
+            needed: size,
+            available: buffer.len(),
+        })?;
+
+        let expires_nanos = u64::try_from(
+            self.expires_at
+                .timestamp_nanos()
+                .ok_or_else(|| SbeError::InvalidTimestamp("expires_at out of range".to_string()))?,
+        )
+        .map_err(|_| SbeError::InvalidTimestamp("expires_at cannot be negative".to_string()))?;
+        buffer[offset..offset.checked_add(8).ok_or(SbeError::Overflow)?]
+            .copy_from_slice(&expires_nanos.to_le_bytes());
+        offset = offset.checked_add(8).ok_or(SbeError::BufferTooSmall {
+            needed: size,
+            available: buffer.len(),
+        })?;
+
+        let created_nanos = u64::try_from(
+            self.created_at
+                .timestamp_nanos()
+                .ok_or_else(|| SbeError::InvalidTimestamp("created_at out of range".to_string()))?,
+        )
+        .map_err(|_| SbeError::InvalidTimestamp("created_at cannot be negative".to_string()))?;
+        buffer[offset..offset.checked_add(8).ok_or(SbeError::Overflow)?]
+            .copy_from_slice(&created_nanos.to_le_bytes());
+        offset = offset.checked_add(8).ok_or(SbeError::BufferTooSmall {
+            needed: size,
+            available: buffer.len(),
+        })?;
+
+        let updated_nanos = u64::try_from(
+            self.updated_at
+                .timestamp_nanos()
+                .ok_or_else(|| SbeError::InvalidTimestamp("updated_at out of range".to_string()))?,
+        )
+        .map_err(|_| SbeError::InvalidTimestamp("updated_at cannot be negative".to_string()))?;
+        buffer[offset..offset.checked_add(8).ok_or(SbeError::Overflow)?]
+            .copy_from_slice(&updated_nanos.to_le_bytes());
+        offset = offset.checked_add(8).ok_or(SbeError::BufferTooSmall {
+            needed: size,
+            available: buffer.len(),
+        })?;
+
+        buffer[offset] = encode_asset_class(self.asset_class);
+        offset = offset.checked_add(1).ok_or(SbeError::BufferTooSmall {
+            needed: size,
+            available: buffer.len(),
+        })?;
+
+        SbeUuid::from_uuid(self.selected_quote_id).encode(&mut buffer[offset..])?;
+        offset = offset
+            .checked_add(SbeUuid::SIZE)
+            .ok_or(SbeError::BufferTooSmall {
+                needed: size,
+                available: buffer.len(),
+            })?;
+
+        // quotes group header
+        let group_end = offset
+            .checked_add(Self::GROUP_HEADER_SIZE)
+            .ok_or(SbeError::Overflow)?;
+        buffer[offset..offset + 2].copy_from_slice(&Self::QUOTE_BLOCK_LENGTH.to_le_bytes());
+        let quotes_count = u16::try_from(self.quotes.len())
+            .map_err(|_| SbeError::InvalidFieldValue("quotes count exceeds u16".to_string()))?;
+        buffer[offset + 2..group_end].copy_from_slice(&quotes_count.to_le_bytes());
+        offset = group_end;
+
+        // quotes group entries
+        for quote in &self.quotes {
+            SbeUuid::from_uuid(quote.quote_id).encode(&mut buffer[offset..])?;
+            offset = offset
+                .checked_add(SbeUuid::SIZE)
+                .ok_or(SbeError::BufferTooSmall {
+                    needed: size,
+                    available: buffer.len(),
+                })?;
+
+            SbeDecimal::from_decimal(quote.price.get()).encode(&mut buffer[offset..])?;
+            offset = offset
+                .checked_add(SbeDecimal::SIZE)
+                .ok_or(SbeError::BufferTooSmall {
+                    needed: size,
+                    available: buffer.len(),
+                })?;
+
+            SbeDecimal::from_decimal(quote.quantity.get()).encode(&mut buffer[offset..])?;
+            offset = offset
+                .checked_add(SbeDecimal::SIZE)
+                .ok_or(SbeError::BufferTooSmall {
+                    needed: size,
+                    available: buffer.len(),
+                })?;
+
+            SbeDecimal::from_decimal(quote.commission).encode(&mut buffer[offset..])?;
+            offset = offset
+                .checked_add(SbeDecimal::SIZE)
+                .ok_or(SbeError::BufferTooSmall {
+                    needed: size,
+                    available: buffer.len(),
+                })?;
+
+            let valid_nanos = u64::try_from(
+                quote
+                    .valid_until
+                    .timestamp_nanos()
+                    .ok_or_else(|| SbeError::InvalidTimestamp("valid_until out of range".to_string()))?,
+            )
+            .map_err(|_| SbeError::InvalidTimestamp("valid_until cannot be negative".to_string()))?;
+            buffer[offset..offset.checked_add(8).ok_or(SbeError::Overflow)?]
+                .copy_from_slice(&valid_nanos.to_le_bytes());
+            offset = offset.checked_add(8).ok_or(SbeError::BufferTooSmall {
+                needed: size,
+                available: buffer.len(),
+            })?;
+
+            let quote_created_nanos = u64::try_from(
+                quote
+                    .created_at
+                    .timestamp_nanos()
+                    .ok_or_else(|| SbeError::InvalidTimestamp("quote created_at out of range".to_string()))?,
+            )
+            .map_err(|_| SbeError::InvalidTimestamp("quote created_at cannot be negative".to_string()))?;
+            buffer[offset..offset.checked_add(8).ok_or(SbeError::Overflow)?]
+                .copy_from_slice(&quote_created_nanos.to_le_bytes());
+            offset = offset.checked_add(8).ok_or(SbeError::BufferTooSmall {
+                needed: size,
+                available: buffer.len(),
+            })?;
+
+            buffer[offset] = encode_venue_type(quote.venue_type);
+            offset = offset.checked_add(1).ok_or(SbeError::BufferTooSmall {
+                needed: size,
+                available: buffer.len(),
+            })?;
+
+            let venue_size = encode_var_string(&quote.venue_id, &mut buffer[offset..])?;
+            offset = offset
+                .checked_add(venue_size)
+                .ok_or(SbeError::BufferTooSmall {
+                    needed: size,
+                    available: buffer.len(),
+                })?;
+        }
+
+        let client_size = encode_var_string(&self.client_id, &mut buffer[offset..])?;
+        offset = offset
+            .checked_add(client_size)
+            .ok_or(SbeError::BufferTooSmall {
+                needed: size,
+                available: buffer.len(),
+            })?;
+
+        let symbol_size = encode_var_string(&self.symbol, &mut buffer[offset..])?;
+        offset = offset
+            .checked_add(symbol_size)
+            .ok_or(SbeError::BufferTooSmall {
+                needed: size,
+                available: buffer.len(),
+            })?;
+
+        let base_size = encode_var_string(&self.base_asset, &mut buffer[offset..])?;
+        offset = offset.checked_add(base_size).ok_or(SbeError::BufferTooSmall {
+            needed: size,
+            available: buffer.len(),
+        })?;
+
+        let quote_asset_size = encode_var_string(&self.quote_asset, &mut buffer[offset..])?;
+        offset = offset
+            .checked_add(quote_asset_size)
+            .ok_or(SbeError::BufferTooSmall {
+                needed: size,
+                available: buffer.len(),
+            })?;
+
+        Ok(offset)
+    }
+}
+
+impl<const TEMPLATE_ID: u16> SbeDecode for RfqResponse<TEMPLATE_ID> {
+    fn decode(buffer: &[u8]) -> SbeResult<Self> {
+        let (_block_length, template_id, _schema_id, _version) = decode_header(buffer)?;
+
+        if template_id != TEMPLATE_ID {
+            return Err(SbeError::UnknownTemplateId(template_id));
+        }
+
+        let mut offset: usize = MESSAGE_HEADER_SIZE;
+
+        let request_uuid = SbeUuid::decode(&buffer[offset..])?;
+        offset = offset.checked_add(SbeUuid::SIZE).ok_or(SbeError::Overflow)?;
+
+        let rfq_uuid = SbeUuid::decode(&buffer[offset..])?;
+        offset = offset.checked_add(SbeUuid::SIZE).ok_or(SbeError::Overflow)?;
+
+        let side = decode_order_side(buffer[offset])?;
+        offset = offset.checked_add(1).ok_or(SbeError::Overflow)?;
+
+        let qty_sbe = SbeDecimal::decode(&buffer[offset..])?;
+        let quantity = Quantity::from_decimal(qty_sbe.to_decimal()?)
+            .map_err(|e| SbeError::InvalidFieldValue(format!("invalid quantity: {}", e)))?;
+        offset = offset.checked_add(SbeDecimal::SIZE).ok_or(SbeError::Overflow)?;
+
+        let state = decode_rfq_state(buffer[offset])?;
+        offset = offset.checked_add(1).ok_or(SbeError::Overflow)?;
+
+        let expires_bytes = buffer
+            .get(offset..offset.checked_add(8).ok_or(SbeError::Overflow)?)
+            .ok_or_else(|| SbeError::BufferTooSmall {
+                needed: offset + 8,
+                available: buffer.len(),
+            })?;
+        let expires_at = Timestamp::from_nanos(
+            u64::from_le_bytes(
+                expires_bytes
+                    .try_into()
+                    .map_err(|_| SbeError::InvalidFieldValue("invalid expiresAt".to_string()))?,
+            ) as i64,
+        )
+        .ok_or_else(|| SbeError::InvalidTimestamp("expiresAt out of range".to_string()))?;
+        offset = offset.checked_add(8).ok_or(SbeError::Overflow)?;
+
+        let created_bytes = buffer
+            .get(offset..offset.checked_add(8).ok_or(SbeError::Overflow)?)
+            .ok_or_else(|| SbeError::BufferTooSmall {
+                needed: offset + 8,
+                available: buffer.len(),
+            })?;
+        let created_at = Timestamp::from_nanos(
+            u64::from_le_bytes(
+                created_bytes
+                    .try_into()
+                    .map_err(|_| SbeError::InvalidFieldValue("invalid createdAt".to_string()))?,
+            ) as i64,
+        )
+        .ok_or_else(|| SbeError::InvalidTimestamp("createdAt out of range".to_string()))?;
+        offset = offset.checked_add(8).ok_or(SbeError::Overflow)?;
+
+        let updated_bytes = buffer
+            .get(offset..offset.checked_add(8).ok_or(SbeError::Overflow)?)
+            .ok_or_else(|| SbeError::BufferTooSmall {
+                needed: offset + 8,
+                available: buffer.len(),
+            })?;
+        let updated_at = Timestamp::from_nanos(
+            u64::from_le_bytes(
+                updated_bytes
+                    .try_into()
+                    .map_err(|_| SbeError::InvalidFieldValue("invalid updatedAt".to_string()))?,
+            ) as i64,
+        )
+        .ok_or_else(|| SbeError::InvalidTimestamp("updatedAt out of range".to_string()))?;
+        offset = offset.checked_add(8).ok_or(SbeError::Overflow)?;
+
+        let asset_class = decode_asset_class(buffer[offset])?;
+        offset = offset.checked_add(1).ok_or(SbeError::Overflow)?;
+
+        let selected_quote_uuid = SbeUuid::decode(&buffer[offset..])?;
+        offset = offset.checked_add(SbeUuid::SIZE).ok_or(SbeError::Overflow)?;
+
+        let group_header = buffer
+            .get(offset..offset.checked_add(Self::GROUP_HEADER_SIZE).ok_or(SbeError::Overflow)?)
+            .ok_or_else(|| SbeError::BufferTooSmall {
+                needed: offset + Self::GROUP_HEADER_SIZE,
+                available: buffer.len(),
+            })?;
+        let quote_block_length = u16::from_le_bytes([group_header[0], group_header[1]]);
+        let quote_count = u16::from_le_bytes([group_header[2], group_header[3]]);
+        if quote_block_length != Self::QUOTE_BLOCK_LENGTH {
+            return Err(SbeError::InvalidHeader(format!(
+                "unexpected quotes block length: {}",
+                quote_block_length
+            )));
+        }
+        offset = offset
+            .checked_add(Self::GROUP_HEADER_SIZE)
+            .ok_or(SbeError::Overflow)?;
+
+        let mut quotes = Vec::with_capacity(quote_count as usize);
+        for _ in 0..quote_count {
+            let quote_uuid = SbeUuid::decode(&buffer[offset..])?;
+            offset = offset.checked_add(SbeUuid::SIZE).ok_or(SbeError::Overflow)?;
+
+            let price_sbe = SbeDecimal::decode(&buffer[offset..])?;
+            let quote_price = Price::from_decimal(price_sbe.to_decimal()?)
+                .map_err(|e| SbeError::InvalidFieldValue(format!("invalid quote price: {}", e)))?;
+            offset = offset.checked_add(SbeDecimal::SIZE).ok_or(SbeError::Overflow)?;
+
+            let quantity_sbe = SbeDecimal::decode(&buffer[offset..])?;
+            let quote_quantity = Quantity::from_decimal(quantity_sbe.to_decimal()?).map_err(|e| {
+                SbeError::InvalidFieldValue(format!("invalid quote quantity: {}", e))
+            })?;
+            offset = offset.checked_add(SbeDecimal::SIZE).ok_or(SbeError::Overflow)?;
+
+            let commission_sbe = SbeDecimal::decode(&buffer[offset..])?;
+            let commission = commission_sbe.to_decimal()?;
+            offset = offset.checked_add(SbeDecimal::SIZE).ok_or(SbeError::Overflow)?;
+
+            let valid_bytes = buffer
+                .get(offset..offset.checked_add(8).ok_or(SbeError::Overflow)?)
+                .ok_or_else(|| SbeError::BufferTooSmall {
+                    needed: offset + 8,
+                    available: buffer.len(),
+                })?;
+            let valid_until = Timestamp::from_nanos(
+                u64::from_le_bytes(
+                    valid_bytes.try_into().map_err(|_| {
+                        SbeError::InvalidFieldValue("invalid quote validUntil".to_string())
+                    })?,
+                ) as i64,
+            )
+            .ok_or_else(|| SbeError::InvalidTimestamp("validUntil out of range".to_string()))?;
+            offset = offset.checked_add(8).ok_or(SbeError::Overflow)?;
+
+            let quote_created_bytes = buffer
+                .get(offset..offset.checked_add(8).ok_or(SbeError::Overflow)?)
+                .ok_or_else(|| SbeError::BufferTooSmall {
+                    needed: offset + 8,
+                    available: buffer.len(),
+                })?;
+            let quote_created_at = Timestamp::from_nanos(
+                u64::from_le_bytes(
+                    quote_created_bytes.try_into().map_err(|_| {
+                        SbeError::InvalidFieldValue("invalid quote createdAt".to_string())
+                    })?,
+                ) as i64,
+            )
+            .ok_or_else(|| SbeError::InvalidTimestamp("quote createdAt out of range".to_string()))?;
+            offset = offset.checked_add(8).ok_or(SbeError::Overflow)?;
+
+            let venue_type = decode_venue_type(buffer[offset])?;
+            offset = offset.checked_add(1).ok_or(SbeError::Overflow)?;
+
+            let (venue_id, venue_size) = decode_var_string(&buffer[offset..])?;
+            offset = offset.checked_add(venue_size).ok_or(SbeError::Overflow)?;
+
+            quotes.push(RfqQuoteEntry {
+                quote_id: quote_uuid.to_uuid(),
+                price: quote_price,
+                quantity: quote_quantity,
+                commission,
+                valid_until,
+                created_at: quote_created_at,
+                venue_type,
+                venue_id,
+            });
+        }
+
+        let (client_id, client_size) = decode_var_string(&buffer[offset..])?;
+        offset = offset.checked_add(client_size).ok_or(SbeError::Overflow)?;
+
+        let (symbol, symbol_size) = decode_var_string(&buffer[offset..])?;
+        offset = offset.checked_add(symbol_size).ok_or(SbeError::Overflow)?;
+
+        let (base_asset, base_size) = decode_var_string(&buffer[offset..])?;
+        offset = offset.checked_add(base_size).ok_or(SbeError::Overflow)?;
+
+        let (quote_asset, _quote_asset_size) = decode_var_string(&buffer[offset..])?;
+
+        Ok(Self {
+            request_id: request_uuid.to_uuid(),
+            rfq_id: rfq_uuid.to_uuid(),
+            side,
+            quantity,
+            state,
+            expires_at,
+            created_at,
+            updated_at,
+            asset_class,
+            selected_quote_id: selected_quote_uuid.to_uuid(),
+            quotes,
+            client_id,
+            symbol,
+            base_asset,
+            quote_asset,
+        })
+    }
+}
+
 /// ExecuteTradeResponse - Response containing executed trade details.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecuteTradeResponse {
@@ -1804,6 +2323,19 @@ impl SbeDecode for ErrorResponse {
 mod tests {
     use super::*;
 
+    fn sample_rfq_quote() -> RfqQuoteEntry {
+        RfqQuoteEntry {
+            quote_id: Uuid::new_v4(),
+            price: Price::from_decimal(rust_decimal::Decimal::new(12345, 2)).unwrap(),
+            quantity: Quantity::from_decimal(rust_decimal::Decimal::new(10, 0)).unwrap(),
+            commission: rust_decimal::Decimal::new(15, 3),
+            valid_until: Timestamp::now(),
+            created_at: Timestamp::now(),
+            venue_type: VenueType::InternalMM,
+            venue_id: "venue-1".to_string(),
+        }
+    }
+
     #[test]
     fn get_rfq_request_roundtrip() {
         let request = GetRfqRequest::new(Uuid::new_v4(), Uuid::new_v4());
@@ -1841,5 +2373,92 @@ mod tests {
 
         let decoded = SubscribeQuotesRequest::decode(&buffer).unwrap();
         assert_eq!(request, decoded);
+    }
+
+    #[test]
+    fn create_rfq_response_roundtrip() {
+        let response = CreateRfqResponse {
+            request_id: Uuid::new_v4(),
+            rfq_id: Uuid::new_v4(),
+            side: OrderSide::Buy,
+            quantity: Quantity::from_decimal(rust_decimal::Decimal::new(5, 0)).unwrap(),
+            state: RfqState::Created,
+            expires_at: Timestamp::now(),
+            created_at: Timestamp::now(),
+            updated_at: Timestamp::now(),
+            asset_class: AssetClass::CryptoSpot,
+            selected_quote_id: Uuid::nil(),
+            quotes: vec![sample_rfq_quote()],
+            client_id: "client-1".to_string(),
+            symbol: "BTC-USD".to_string(),
+            base_asset: "BTC".to_string(),
+            quote_asset: "USD".to_string(),
+        };
+
+        let mut buffer = vec![0u8; response.encoded_size()];
+        let encoded_size = response.encode(&mut buffer).unwrap();
+
+        assert_eq!(encoded_size, response.encoded_size());
+
+        let decoded = CreateRfqResponse::decode(&buffer).unwrap();
+        assert_eq!(response, decoded);
+    }
+
+    #[test]
+    fn get_rfq_response_roundtrip() {
+        let response = GetRfqResponse {
+            request_id: Uuid::new_v4(),
+            rfq_id: Uuid::new_v4(),
+            side: OrderSide::Sell,
+            quantity: Quantity::from_decimal(rust_decimal::Decimal::new(7, 0)).unwrap(),
+            state: RfqState::QuotesReceived,
+            expires_at: Timestamp::now(),
+            created_at: Timestamp::now(),
+            updated_at: Timestamp::now(),
+            asset_class: AssetClass::Forex,
+            selected_quote_id: Uuid::new_v4(),
+            quotes: vec![sample_rfq_quote()],
+            client_id: "client-2".to_string(),
+            symbol: "EUR-USD".to_string(),
+            base_asset: "EUR".to_string(),
+            quote_asset: "USD".to_string(),
+        };
+
+        let mut buffer = vec![0u8; response.encoded_size()];
+        let encoded_size = response.encode(&mut buffer).unwrap();
+
+        assert_eq!(encoded_size, response.encoded_size());
+
+        let decoded = GetRfqResponse::decode(&buffer).unwrap();
+        assert_eq!(response, decoded);
+    }
+
+    #[test]
+    fn cancel_rfq_response_roundtrip() {
+        let response = CancelRfqResponse {
+            request_id: Uuid::new_v4(),
+            rfq_id: Uuid::new_v4(),
+            side: OrderSide::Buy,
+            quantity: Quantity::from_decimal(rust_decimal::Decimal::new(12, 0)).unwrap(),
+            state: RfqState::Cancelled,
+            expires_at: Timestamp::now(),
+            created_at: Timestamp::now(),
+            updated_at: Timestamp::now(),
+            asset_class: AssetClass::Commodity,
+            selected_quote_id: Uuid::nil(),
+            quotes: vec![sample_rfq_quote()],
+            client_id: "client-3".to_string(),
+            symbol: "XAU-USD".to_string(),
+            base_asset: "XAU".to_string(),
+            quote_asset: "USD".to_string(),
+        };
+
+        let mut buffer = vec![0u8; response.encoded_size()];
+        let encoded_size = response.encode(&mut buffer).unwrap();
+
+        assert_eq!(encoded_size, response.encoded_size());
+
+        let decoded = CancelRfqResponse::decode(&buffer).unwrap();
+        assert_eq!(response, decoded);
     }
 }
