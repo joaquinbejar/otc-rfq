@@ -113,7 +113,7 @@ rand = "0.10"
 tonic-prost = "0.14"
 tokio-stream = "0.1"
 # Async runtime
-tokio = { version = "1.49", features = ["full", "tracing"] }
+tokio = { version = "1.50", features = ["full", "tracing"] }
 
 # Web frameworks
 axum = { version = "0.8", features = ["ws", "macros"] }
@@ -131,7 +131,7 @@ prost = "0.14"
 sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "uuid", "chrono", "rust_decimal"] }
 
 # Caching
-redis = { version = "1.0", features = ["tokio-comp", "connection-manager"] }
+redis = { version = "1.1", features = ["tokio-comp", "connection-manager"] }
 
 # Error handling
 thiserror = "2.0"
@@ -142,8 +142,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # Types
-uuid = { version = "1.21", features = ["v4", "serde"] }
-rust_decimal = { version = "1.40", features = ["serde", "serde-with-str"] }
+uuid = { version = "1.23", features = ["v4", "serde"] }
+rust_decimal = { version = "1.41", features = ["serde", "serde-with-str"] }
 chrono = { version = "0.4", features = ["serde"] }
 
 # Crypto and blockchain
@@ -174,7 +174,7 @@ governor = "0.10"
 bytes = "1.11"
 printpdf = "0.9" # DO NOT DOWNGRADE FROM 0.9
 schemars = "1.2" # DO NOT DOWNGRADE FROM 1.2
-clap = { version = "4.5", features = ["derive"] }
+clap = { version = "4.6", features = ["derive"] }
 
 # Build dependencies
 tonic-build = "0.14"
@@ -184,7 +184,7 @@ prost-build = "0.14"
 # Dev dependencies
 tokio-test = "0.4"
 wiremock = "0.6"
-proptest = "1.9"
+proptest = "1.11"
 testcontainers = "0.27"
 criterion = { version = "0.8", features = ["async_tokio"] }
 
