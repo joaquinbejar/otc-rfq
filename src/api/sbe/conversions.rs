@@ -100,6 +100,24 @@ impl UnsubscribeRequest {
     }
 }
 
+impl CancelRfqRequest {
+    /// Creates a CancelRfqRequest from domain types.
+    #[must_use]
+    pub fn from_domain(request_id: uuid::Uuid, rfq_id: RfqId, reason: String) -> Self {
+        Self {
+            request_id,
+            rfq_id: rfq_id.get(),
+            reason,
+        }
+    }
+
+    /// Converts to domain RfqId.
+    #[must_use]
+    pub fn to_domain_rfq_id(&self) -> RfqId {
+        RfqId::new(self.rfq_id)
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -122,5 +140,17 @@ mod tests {
         let request = ExecuteTradeRequest::from_domain(rfq_id, quote_id);
         assert_eq!(request.to_domain_rfq_id(), rfq_id);
         assert_eq!(request.to_domain_quote_id(), quote_id);
+    }
+
+    #[test]
+    fn cancel_rfq_request_domain_conversion() {
+        let rfq_id = RfqId::new_v4();
+        let request_id = uuid::Uuid::new_v4();
+        let reason = "Client requested cancellation".to_string();
+
+        let request = CancelRfqRequest::from_domain(request_id, rfq_id, reason.clone());
+        assert_eq!(request.to_domain_rfq_id(), rfq_id);
+        assert_eq!(request.request_id, request_id);
+        assert_eq!(request.reason, reason);
     }
 }

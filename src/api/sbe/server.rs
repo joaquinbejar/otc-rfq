@@ -306,9 +306,15 @@ async fn dispatch_message(frame: &[u8], state: &AppState) -> SbeApiResult<Vec<u8
             let response = handlers::handle_get_rfq(request, state).await?;
             response.encode_to_vec().map_err(SbeApiError::SbeEncoding)
         }
-        // Deferred to #123
-        CANCEL_RFQ_REQUEST_TEMPLATE_ID | EXECUTE_TRADE_REQUEST_TEMPLATE_ID => {
-            Err(SbeApiError::NotImplemented(template_id))
+        CANCEL_RFQ_REQUEST_TEMPLATE_ID => {
+            let request = CancelRfqRequest::decode(frame)?;
+            let response = handlers::handle_cancel_rfq(request, state).await?;
+            response.encode_to_vec().map_err(SbeApiError::SbeEncoding)
+        }
+        EXECUTE_TRADE_REQUEST_TEMPLATE_ID => {
+            let request = ExecuteTradeRequest::decode(frame)?;
+            let response = handlers::handle_execute_trade(request, state).await?;
+            response.encode_to_vec().map_err(SbeApiError::SbeEncoding)
         }
         // Deferred to #124
         SUBSCRIBE_QUOTES_REQUEST_TEMPLATE_ID
@@ -477,19 +483,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dispatch_not_implemented_template() {
+    async fn dispatch_cancel_rfq_not_found() {
         let state = Arc::new(AppState {
             rfq_repository: Arc::new(MockRfqRepository::new()),
         });
 
-        // Create a frame with CancelRfq template (deferred to #123)
-        let mut frame = vec![0u8; MESSAGE_HEADER_SIZE];
-        let template_id = CANCEL_RFQ_REQUEST_TEMPLATE_ID;
-        frame[2] = (template_id & 0xFF) as u8;
-        frame[3] = (template_id >> 8) as u8;
+        let request = CancelRfqRequest {
+            request_id: uuid::Uuid::new_v4(),
+            rfq_id: uuid::Uuid::new_v4(),
+            reason: "test".to_string(),
+        };
+
+        let mut frame = vec![0u8; request.encoded_size()];
+        request.encode(&mut frame).unwrap();
 
         let result = dispatch_message(&frame, &state).await;
-        assert!(matches!(result, Err(SbeApiError::NotImplemented(_))));
+        assert!(matches!(result, Err(SbeApiError::InvalidValue { .. })));
+    }
+
+    #[tokio::test]
+    async fn dispatch_execute_trade_not_found() {
+        let state = Arc::new(AppState {
+            rfq_repository: Arc::new(MockRfqRepository::new()),
+        });
+
+        let request = ExecuteTradeRequest {
+            rfq_id: uuid::Uuid::new_v4(),
+            quote_id: uuid::Uuid::new_v4(),
+        };
+
+        let mut frame = vec![0u8; request.encoded_size()];
+        request.encode(&mut frame).unwrap();
+
+        let result = dispatch_message(&frame, &state).await;
+        assert!(matches!(result, Err(SbeApiError::InvalidValue { .. })));
     }
 
     #[test]

@@ -11,10 +11,59 @@
 use crate::api::sbe::error::{SbeApiError, SbeApiResult};
 use crate::api::sbe::server::AppState;
 use crate::api::sbe::types::*;
-use crate::domain::entities::rfq::RfqBuilder;
+use crate::domain::entities::rfq::{Rfq, RfqBuilder};
+use crate::domain::entities::trade::Trade;
 use crate::domain::value_objects::enums::{SettlementMethod, VenueType};
 use crate::domain::value_objects::timestamp::Timestamp;
-use crate::domain::value_objects::{CounterpartyId, Instrument, RfqId, Symbol};
+use crate::domain::value_objects::{CounterpartyId, Instrument, Symbol};
+
+/// Builds an [`RfqResponse`] from a domain [`Rfq`].
+///
+/// Extracts all fields from the RFQ entity including quotes.
+/// Used by CreateRfq, GetRfq, and CancelRfq handlers.
+#[inline]
+fn rfq_to_response<const T: u16>(rfq: &Rfq, request_id: uuid::Uuid) -> RfqResponse<T> {
+    let symbol = rfq.instrument().symbol();
+    let symbol_str = symbol.to_string();
+    let base_asset = symbol.base_asset().to_string();
+    let quote_asset = symbol.quote_asset().to_string();
+
+    let quotes = rfq
+        .quotes()
+        .iter()
+        .map(|q| RfqQuoteEntry {
+            quote_id: q.id().get(),
+            price: q.price(),
+            quantity: q.quantity(),
+            commission: rust_decimal::Decimal::ZERO,
+            valid_until: q.valid_until(),
+            created_at: q.created_at(),
+            venue_type: VenueType::InternalMM,
+            venue_id: q.venue_id().to_string(),
+        })
+        .collect();
+
+    RfqResponse {
+        request_id,
+        rfq_id: rfq.id().get(),
+        side: rfq.side(),
+        quantity: rfq.quantity(),
+        state: rfq.state(),
+        expires_at: rfq.expires_at(),
+        created_at: rfq.created_at(),
+        updated_at: rfq.updated_at(),
+        asset_class: rfq.instrument().asset_class(),
+        selected_quote_id: rfq
+            .selected_quote_id()
+            .map(|id| id.get())
+            .unwrap_or_else(uuid::Uuid::nil),
+        quotes,
+        client_id: rfq.client_id().to_string(),
+        symbol: symbol_str,
+        base_asset,
+        quote_asset,
+    }
+}
 
 /// Handles CreateRfq request.
 ///
@@ -66,24 +115,8 @@ pub async fn handle_create_rfq(
         .await
         .map_err(|e| SbeApiError::Domain(format!("failed to save RFQ: {}", e)))?;
 
-    // Build response with empty quotes
-    Ok(CreateRfqResponse {
-        request_id: request.request_id,
-        rfq_id: rfq.id().get(),
-        side: rfq.side(),
-        quantity: rfq.quantity(),
-        state: rfq.state(),
-        expires_at: rfq.expires_at(),
-        created_at: rfq.created_at(),
-        updated_at: rfq.updated_at(),
-        asset_class: rfq.instrument().asset_class(),
-        selected_quote_id: uuid::Uuid::nil(),
-        quotes: Vec::new(),
-        client_id: rfq.client_id().to_string(),
-        symbol: rfq.instrument().symbol().to_string(),
-        base_asset: request.base_asset,
-        quote_asset: request.quote_asset,
-    })
+    // Build response using helper
+    Ok(rfq_to_response(&rfq, request.request_id))
 }
 
 /// Handles GetRfq request.
@@ -95,7 +128,7 @@ pub async fn handle_get_rfq(
     request: GetRfqRequest,
     state: &AppState,
 ) -> SbeApiResult<GetRfqResponse> {
-    let rfq_id = RfqId::new(request.rfq_id);
+    let rfq_id = request.to_domain_rfq_id();
 
     // Retrieve RFQ
     let rfq = state
@@ -108,48 +141,109 @@ pub async fn handle_get_rfq(
             message: format!("RFQ not found: {}", rfq_id),
         })?;
 
-    // Extract symbol parts (assuming format "BASE/QUOTE")
-    let symbol_str = rfq.instrument().symbol().to_string();
-    let (base_asset, quote_asset) = match symbol_str.split_once('/') {
-        Some((base, quote)) => (base.to_string(), quote.to_string()),
-        None => (symbol_str.clone(), String::new()),
-    };
+    // Build response using helper
+    Ok(rfq_to_response(&rfq, request.request_id))
+}
 
-    // Convert quotes to SBE format
-    let quotes = rfq
+/// Handles CancelRfq request.
+///
+/// # Errors
+///
+/// Returns error if RFQ not found, state transition invalid, or persistence fails.
+pub async fn handle_cancel_rfq(
+    request: CancelRfqRequest,
+    state: &AppState,
+) -> SbeApiResult<CancelRfqResponse> {
+    let rfq_id = request.to_domain_rfq_id();
+
+    // Retrieve RFQ
+    let mut rfq = state
+        .rfq_repository
+        .find_by_id(rfq_id)
+        .await
+        .map_err(|e| SbeApiError::Domain(format!("failed to find RFQ: {}", e)))?
+        .ok_or_else(|| SbeApiError::InvalidValue {
+            field: "rfq_id",
+            message: format!("RFQ not found: {}", rfq_id),
+        })?;
+
+    // Cancel the RFQ
+    rfq.cancel().map_err(|e| SbeApiError::InvalidValue {
+        field: "state",
+        message: format!("invalid RFQ state for cancellation: {}", e),
+    })?;
+
+    // Persist updated RFQ
+    state
+        .rfq_repository
+        .save(&rfq)
+        .await
+        .map_err(|e| SbeApiError::Domain(format!("failed to save RFQ: {}", e)))?;
+
+    // Build response using helper
+    Ok(rfq_to_response(&rfq, request.request_id))
+}
+
+/// Handles ExecuteTrade request.
+///
+/// # Errors
+///
+/// Returns error if RFQ not found, quote not found, quote expired, or trade creation fails.
+pub async fn handle_execute_trade(
+    request: ExecuteTradeRequest,
+    state: &AppState,
+) -> SbeApiResult<ExecuteTradeResponse> {
+    let rfq_id = request.to_domain_rfq_id();
+    let quote_id = request.to_domain_quote_id();
+
+    // Retrieve RFQ
+    let rfq = state
+        .rfq_repository
+        .find_by_id(rfq_id)
+        .await
+        .map_err(|e| SbeApiError::Domain(format!("failed to find RFQ: {}", e)))?
+        .ok_or_else(|| SbeApiError::InvalidValue {
+            field: "rfq_id",
+            message: format!("RFQ not found: {}", rfq_id),
+        })?;
+
+    // Find the quote
+    let quote = rfq
         .quotes()
         .iter()
-        .map(|q| RfqQuoteEntry {
-            quote_id: q.id().get(),
-            price: q.price(),
-            quantity: q.quantity(),
-            commission: rust_decimal::Decimal::ZERO,
-            valid_until: q.valid_until(),
-            created_at: q.created_at(),
-            venue_type: VenueType::InternalMM,
-            venue_id: q.venue_id().to_string(),
-        })
-        .collect();
+        .find(|q| q.id() == quote_id)
+        .ok_or_else(|| SbeApiError::InvalidValue {
+            field: "quote_id",
+            message: format!("quote not found: {}", quote_id),
+        })?;
 
-    Ok(GetRfqResponse {
-        request_id: request.request_id,
-        rfq_id: rfq.id().get(),
-        side: rfq.side(),
-        quantity: rfq.quantity(),
-        state: rfq.state(),
-        expires_at: rfq.expires_at(),
-        created_at: rfq.created_at(),
-        updated_at: rfq.updated_at(),
-        asset_class: rfq.instrument().asset_class(),
-        selected_quote_id: rfq
-            .selected_quote_id()
-            .map(|id| id.get())
-            .unwrap_or_else(uuid::Uuid::nil),
-        quotes,
-        client_id: rfq.client_id().to_string(),
-        symbol: symbol_str,
-        base_asset,
-        quote_asset,
+    // Validate quote not expired
+    if quote.is_expired() {
+        return Err(SbeApiError::InvalidValue {
+            field: "valid_until",
+            message: format!("quote has expired: {}", quote_id),
+        });
+    }
+
+    // Create trade
+    let trade = Trade::new(
+        rfq_id,
+        quote_id,
+        quote.venue_id().clone(),
+        quote.price(),
+        quote.quantity(),
+    );
+
+    // Build response
+    Ok(ExecuteTradeResponse {
+        trade_id: trade.id().get(),
+        rfq_id: trade.rfq_id().get(),
+        quote_id: trade.quote_id().get(),
+        price: trade.price(),
+        quantity: trade.quantity(),
+        created_at: trade.created_at(),
+        venue_id: trade.venue_id().to_string(),
+        venue_execution_ref: trade.venue_execution_ref().unwrap_or_default().to_string(),
     })
 }
 
@@ -165,7 +259,7 @@ mod tests {
     use super::*;
     use crate::domain::entities::rfq::Rfq;
     use crate::domain::value_objects::enums::AssetClass;
-    use crate::domain::value_objects::{OrderSide, Quantity};
+    use crate::domain::value_objects::{OrderSide, Quantity, RfqId};
     use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::RwLock;
@@ -347,5 +441,271 @@ mod tests {
         assert_eq!(response.client_id, "client-2");
         assert_eq!(response.symbol, "ETH/USD");
         assert_eq!(response.side, OrderSide::Sell);
+    }
+
+    #[tokio::test]
+    async fn handle_cancel_rfq_success() {
+        use crate::domain::entities::rfq::RfqBuilder;
+        use crate::domain::value_objects::rfq_state::RfqState;
+        use crate::domain::value_objects::timestamp::Timestamp;
+
+        let symbol = Symbol::new("BTC/USD").unwrap();
+        let instrument =
+            Instrument::new(symbol, AssetClass::CryptoSpot, SettlementMethod::default());
+        let quantity = Quantity::from_decimal(rust_decimal::Decimal::new(1, 0)).unwrap();
+        let expires_at = Timestamp::now().add_secs(300);
+
+        let rfq = RfqBuilder::new(
+            CounterpartyId::new("client-1"),
+            instrument,
+            OrderSide::Buy,
+            quantity,
+            expires_at,
+        )
+        .build();
+        let rfq_id = rfq.id();
+        let state = AppState {
+            rfq_repository: Arc::new(MockRfqRepository::with_rfq(rfq)),
+        };
+
+        let request = CancelRfqRequest {
+            request_id: Uuid::new_v4(),
+            rfq_id: rfq_id.get(),
+            reason: "Client requested cancellation".to_string(),
+        };
+        let result = handle_cancel_rfq(request.clone(), &state).await;
+        assert!(result.is_ok());
+
+        let response = result.unwrap();
+        assert_eq!(response.request_id, request.request_id);
+        assert_eq!(response.rfq_id, rfq_id.get());
+        assert_eq!(response.state, RfqState::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn handle_cancel_rfq_not_found() {
+        let state = create_test_state();
+        let request = CancelRfqRequest {
+            request_id: Uuid::new_v4(),
+            rfq_id: Uuid::new_v4(),
+            reason: "Test".to_string(),
+        };
+        let result = handle_cancel_rfq(request, &state).await;
+        assert!(matches!(
+            result,
+            Err(SbeApiError::InvalidValue {
+                field: "rfq_id",
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn handle_cancel_rfq_invalid_state() {
+        use crate::domain::entities::rfq::RfqBuilder;
+        use crate::domain::value_objects::timestamp::Timestamp;
+
+        let symbol = Symbol::new("BTC/USD").unwrap();
+        let instrument =
+            Instrument::new(symbol, AssetClass::CryptoSpot, SettlementMethod::default());
+        let quantity = Quantity::from_decimal(rust_decimal::Decimal::new(1, 0)).unwrap();
+        let expires_at = Timestamp::now().add_secs(300);
+
+        let mut rfq = RfqBuilder::new(
+            CounterpartyId::new("client-1"),
+            instrument,
+            OrderSide::Buy,
+            quantity,
+            expires_at,
+        )
+        .build();
+        rfq.cancel().unwrap();
+
+        let rfq_id = rfq.id();
+        let state = AppState {
+            rfq_repository: Arc::new(MockRfqRepository::with_rfq(rfq)),
+        };
+        let request = CancelRfqRequest {
+            request_id: Uuid::new_v4(),
+            rfq_id: rfq_id.get(),
+            reason: "Test".to_string(),
+        };
+        let result = handle_cancel_rfq(request, &state).await;
+        assert!(matches!(
+            result,
+            Err(SbeApiError::InvalidValue { field: "state", .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn handle_execute_trade_success() {
+        use crate::domain::entities::quote::Quote;
+        use crate::domain::entities::rfq::RfqBuilder;
+        use crate::domain::value_objects::timestamp::Timestamp;
+        use crate::domain::value_objects::{Price, VenueId};
+
+        let symbol = Symbol::new("ETH/USD").unwrap();
+        let instrument =
+            Instrument::new(symbol, AssetClass::CryptoSpot, SettlementMethod::default());
+        let quantity = Quantity::from_decimal(rust_decimal::Decimal::new(2, 0)).unwrap();
+        let expires_at = Timestamp::now().add_secs(600);
+
+        let mut rfq = RfqBuilder::new(
+            CounterpartyId::new("client-3"),
+            instrument,
+            OrderSide::Buy,
+            quantity,
+            expires_at,
+        )
+        .build();
+        let rfq_id = rfq.id();
+
+        rfq.start_quote_collection().unwrap();
+        let quote = Quote::new(
+            rfq_id,
+            VenueId::new("venue-1"),
+            Price::from_decimal(rust_decimal::Decimal::new(2000, 0)).unwrap(),
+            quantity,
+            Timestamp::now().add_secs(300),
+        )
+        .unwrap();
+        let quote_id = quote.id();
+        rfq.receive_quote(quote).unwrap();
+
+        let state = AppState {
+            rfq_repository: Arc::new(MockRfqRepository::with_rfq(rfq)),
+        };
+        let request = ExecuteTradeRequest {
+            rfq_id: rfq_id.get(),
+            quote_id: quote_id.get(),
+        };
+        let result = handle_execute_trade(request.clone(), &state).await;
+        assert!(result.is_ok());
+
+        let response = result.unwrap();
+        assert_eq!(response.rfq_id, rfq_id.get());
+        assert_eq!(response.quote_id, quote_id.get());
+        assert_eq!(response.venue_id, "venue-1");
+        assert!(!response.trade_id.is_nil());
+    }
+
+    #[tokio::test]
+    async fn handle_execute_trade_rfq_not_found() {
+        let state = create_test_state();
+        let request = ExecuteTradeRequest {
+            rfq_id: Uuid::new_v4(),
+            quote_id: Uuid::new_v4(),
+        };
+        let result = handle_execute_trade(request, &state).await;
+        assert!(matches!(
+            result,
+            Err(SbeApiError::InvalidValue {
+                field: "rfq_id",
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn handle_execute_trade_quote_not_found() {
+        use crate::domain::entities::rfq::RfqBuilder;
+        use crate::domain::value_objects::timestamp::Timestamp;
+
+        let symbol = Symbol::new("BTC/USD").unwrap();
+        let instrument =
+            Instrument::new(symbol, AssetClass::CryptoSpot, SettlementMethod::default());
+        let quantity = Quantity::from_decimal(rust_decimal::Decimal::new(1, 0)).unwrap();
+        let expires_at = Timestamp::now().add_secs(300);
+
+        let rfq = RfqBuilder::new(
+            CounterpartyId::new("client-1"),
+            instrument,
+            OrderSide::Buy,
+            quantity,
+            expires_at,
+        )
+        .build();
+        let rfq_id = rfq.id();
+        let state = AppState {
+            rfq_repository: Arc::new(MockRfqRepository::with_rfq(rfq)),
+        };
+        let request = ExecuteTradeRequest {
+            rfq_id: rfq_id.get(),
+            quote_id: Uuid::new_v4(),
+        };
+        let result = handle_execute_trade(request, &state).await;
+        assert!(matches!(
+            result,
+            Err(SbeApiError::InvalidValue {
+                field: "quote_id",
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn handle_execute_trade_quote_expired() {
+        use crate::domain::entities::anonymity::AnonymityLevel;
+        use crate::domain::entities::quote::Quote;
+        use crate::domain::entities::rfq::Rfq;
+        use crate::domain::value_objects::rfq_state::RfqState;
+        use crate::domain::value_objects::timestamp::Timestamp;
+        use crate::domain::value_objects::{Price, QuoteId, VenueId};
+
+        let symbol = Symbol::new("BTC/USD").unwrap();
+        let instrument =
+            Instrument::new(symbol, AssetClass::CryptoSpot, SettlementMethod::default());
+        let quantity = Quantity::from_decimal(rust_decimal::Decimal::new(1, 0)).unwrap();
+        let expires_at = Timestamp::now().add_secs(300);
+
+        let rfq_id = RfqId::new_v4();
+        let quote_id = QuoteId::new_v4();
+
+        let quote = Quote::from_parts(
+            quote_id,
+            rfq_id,
+            VenueId::new("venue-1"),
+            Price::from_decimal(rust_decimal::Decimal::new(50000, 0)).unwrap(),
+            quantity,
+            None,
+            Timestamp::from_nanos(1).unwrap(),
+            None,
+            Timestamp::now(),
+            false,
+        );
+        let rfq = Rfq::from_parts(
+            rfq_id,
+            CounterpartyId::new("client-1"),
+            instrument,
+            OrderSide::Buy,
+            quantity,
+            None,
+            AnonymityLevel::default(),
+            RfqState::QuotesReceived,
+            expires_at,
+            vec![quote],
+            None,
+            None,
+            None,
+            1,
+            Timestamp::now(),
+            Timestamp::now(),
+        );
+
+        let state = AppState {
+            rfq_repository: Arc::new(MockRfqRepository::with_rfq(rfq)),
+        };
+        let request = ExecuteTradeRequest {
+            rfq_id: rfq_id.get(),
+            quote_id: quote_id.get(),
+        };
+        let result = handle_execute_trade(request, &state).await;
+        assert!(matches!(
+            result,
+            Err(SbeApiError::InvalidValue {
+                field: "valid_until",
+                ..
+            })
+        ));
     }
 }
