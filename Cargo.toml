@@ -197,7 +197,7 @@ ironfix-engine = "0.1"
 # IronSBE for binary encoding
 ironsbe-core = "0.2.0"
 ironsbe-schema = "0.2.0"
-ironsbe-codegen = "0.2.0"
+ironsbe-codegen = "0.2.1"
 
 [features]
 default = []
