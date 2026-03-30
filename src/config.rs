@@ -181,6 +181,62 @@ impl RestConfig {
 }
 
 // ============================================================================
+// SBE Server Configuration
+// ============================================================================
+
+/// SBE TCP server configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SbeConfig {
+    /// Server host address.
+    #[serde(default = "default_host")]
+    pub host: String,
+
+    /// Server port.
+    #[serde(default = "default_sbe_port")]
+    pub port: u16,
+
+    /// Maximum concurrent connections.
+    #[serde(default = "default_max_connections")]
+    pub max_connections: usize,
+
+    /// Read timeout in seconds.
+    #[serde(default = "default_request_timeout")]
+    pub read_timeout_secs: u64,
+
+    /// Maximum message size in bytes.
+    #[serde(default = "default_max_message_size")]
+    pub max_message_size: usize,
+}
+
+impl Default for SbeConfig {
+    fn default() -> Self {
+        Self {
+            host: default_host(),
+            port: default_sbe_port(),
+            max_connections: default_max_connections(),
+            read_timeout_secs: default_request_timeout(),
+            max_message_size: default_max_message_size(),
+        }
+    }
+}
+
+impl SbeConfig {
+    /// Returns the socket address for the SBE server.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the address cannot be parsed.
+    pub fn socket_addr(&self) -> Result<SocketAddr, ConfigError> {
+        format!("{}:{}", self.host, self.port)
+            .parse()
+            .map_err(|e| ConfigError::InvalidValue {
+                field: "sbe.host:port".to_string(),
+                message: format!("{e}"),
+            })
+    }
+}
+
+// ============================================================================
 // Logging Configuration
 // ============================================================================
 
@@ -331,6 +387,10 @@ pub struct AppConfig {
     #[serde(default)]
     pub rest: RestConfig,
 
+    /// SBE server configuration.
+    #[serde(default)]
+    pub sbe: SbeConfig,
+
     /// Logging configuration.
     #[serde(default)]
     pub log: LogConfig,
@@ -407,6 +467,16 @@ impl AppConfig {
             self.rest.port = p;
         }
 
+        // SBE configuration
+        if let Ok(host) = std::env::var("OTC_RFQ_SBE_HOST") {
+            self.sbe.host = host;
+        }
+        if let Ok(port) = std::env::var("OTC_RFQ_SBE_PORT")
+            && let Ok(p) = port.parse()
+        {
+            self.sbe.port = p;
+        }
+
         // Logging configuration
         if let Ok(level) = std::env::var("OTC_RFQ_LOG_LEVEL") {
             self.log.level = level;
@@ -444,6 +514,9 @@ impl AppConfig {
         // Validate REST address
         self.rest.socket_addr()?;
 
+        // Validate SBE address
+        self.sbe.socket_addr()?;
+
         // Validate log level
         let valid_levels = ["trace", "debug", "info", "warn", "error"];
         if !valid_levels.contains(&self.log.level.to_lowercase().as_str()) {
@@ -474,6 +547,10 @@ fn default_grpc_port() -> u16 {
 
 fn default_rest_port() -> u16 {
     8080
+}
+
+fn default_sbe_port() -> u16 {
+    50052
 }
 
 fn default_max_connections() -> usize {
@@ -518,6 +595,10 @@ fn default_quote_timeout() -> u64 {
 
 fn default_max_concurrent_requests() -> usize {
     10
+}
+
+fn default_max_message_size() -> usize {
+    1024 * 1024 // 1 MB
 }
 
 fn default_service_name() -> String {

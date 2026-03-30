@@ -73,10 +73,12 @@ async fn main() -> anyhow::Result<()> {
         Some(Arc::clone(&mm_performance_tracker)),
         shutdown_rx.clone(),
     );
+    let sbe_handle = start_sbe_server(&config, Arc::clone(&rfq_repository), shutdown_rx.clone());
 
     info!(
         grpc_addr = %format!("{}:{}", config.grpc.host, config.grpc.port),
         rest_addr = %format!("{}:{}", config.rest.host, config.rest.port),
+        sbe_addr = %format!("{}:{}", config.sbe.host, config.sbe.port),
         "OTC RFQ Engine started successfully"
     );
 
@@ -91,7 +93,7 @@ async fn main() -> anyhow::Result<()> {
     // Wait for servers to finish with timeout
     let shutdown_timeout = tokio::time::Duration::from_secs(30);
     let shutdown_result = tokio::time::timeout(shutdown_timeout, async {
-        let _ = tokio::join!(grpc_handle, rest_handle);
+        let _ = tokio::join!(grpc_handle, rest_handle, sbe_handle);
     })
     .await;
 
@@ -246,6 +248,49 @@ fn start_rest_server(
         }
 
         info!("REST server stopped");
+    })
+}
+
+/// Starts the SBE TCP server.
+fn start_sbe_server(
+    config: &AppConfig,
+    rfq_repository: Arc<dyn otc_rfq::application::use_cases::create_rfq::RfqRepository>,
+    shutdown_rx: watch::Receiver<bool>,
+) -> tokio::task::JoinHandle<()> {
+    let addr = match config.sbe.socket_addr() {
+        Ok(a) => a,
+        Err(e) => {
+            error!(error = %e, "Invalid SBE address");
+            return tokio::spawn(async {});
+        }
+    };
+
+    let max_conn = config.sbe.max_connections;
+    let read_timeout = config.sbe.read_timeout_secs;
+    let max_size = config.sbe.max_message_size;
+
+    tokio::spawn(async move {
+        use otc_rfq::api::sbe::server::{AppState, SbeConfig, SbeServer};
+
+        let listener = match tokio::net::TcpListener::bind(addr).await {
+            Ok(l) => l,
+            Err(e) => {
+                error!(error = %e, "Failed to bind SBE server");
+                return;
+            }
+        };
+
+        let state = Arc::new(AppState { rfq_repository });
+        let server_config = SbeConfig {
+            max_connections: max_conn,
+            read_timeout_secs: read_timeout,
+            max_message_size: max_size,
+        };
+        let server = SbeServer::new(listener, state, shutdown_rx, server_config);
+
+        if let Err(e) = server.run().await {
+            error!(error = %e, "SBE server error");
+        }
     })
 }
 
