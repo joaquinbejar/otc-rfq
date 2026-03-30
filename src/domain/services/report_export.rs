@@ -3,9 +3,17 @@
 //! Export incentive reports to various formats (JSON, PDF).
 
 use crate::domain::entities::settlement::IncentiveReport;
-use printpdf::*;
+use printpdf::{
+    FontId, Mm, Op, ParsedFont, PdfDocument, PdfFontHandle, PdfPage, PdfSaveOptions, Point, Pt,
+    TextItem,
+};
 use rust_decimal::Decimal;
-use std::io::BufWriter;
+
+/// Embedded Roboto Regular font.
+const ROBOTO_REGULAR: &[u8] = include_bytes!("assets/fonts/Roboto-Regular.ttf");
+
+/// Embedded Roboto Bold font.
+const ROBOTO_BOLD: &[u8] = include_bytes!("assets/fonts/Roboto-Bold.ttf");
 
 /// Errors that can occur during report export.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -91,126 +99,163 @@ impl ReportExporter for IncentiveReportExporter {
     }
 
     fn export_to_pdf(&self, report: &IncentiveReport) -> Result<Vec<u8>, ExportError> {
-        let (doc, page1, layer1) =
-            PdfDocument::new("Incentive Report", Mm(210.0), Mm(297.0), "Layer 1");
+        let mut doc = PdfDocument::new("Incentive Report");
 
-        let font = doc
-            .add_builtin_font(BuiltinFont::Helvetica)
-            .map_err(|e| ExportError::PdfGeneration(e.to_string()))?;
-        let font_bold = doc
-            .add_builtin_font(BuiltinFont::HelveticaBold)
-            .map_err(|e| ExportError::PdfGeneration(e.to_string()))?;
+        // Parse and add fonts
+        let mut warnings = Vec::new();
+        let font_regular = ParsedFont::from_bytes(ROBOTO_REGULAR, 0, &mut warnings)
+            .ok_or_else(|| ExportError::PdfGeneration("Failed to parse regular font".into()))?;
+        let font_bold_parsed = ParsedFont::from_bytes(ROBOTO_BOLD, 0, &mut warnings)
+            .ok_or_else(|| ExportError::PdfGeneration("Failed to parse bold font".into()))?;
 
-        let current_layer = doc.get_page(page1).get_layer(layer1);
+        let font: FontId = doc.add_font(&font_regular);
+        let font_bold: FontId = doc.add_font(&font_bold_parsed);
 
+        let mut ops: Vec<Op> = Vec::new();
         let mut y_position = 270.0;
         let left_margin = 20.0;
 
+        // Helper to add text at position
+        fn add_text(ops: &mut Vec<Op>, text: &str, size: f32, x: f32, y: f32, font_id: &FontId) {
+            ops.push(Op::StartTextSection);
+            ops.push(Op::SetTextCursor {
+                pos: Point {
+                    x: Mm(x).into(),
+                    y: Mm(y).into(),
+                },
+            });
+            ops.push(Op::SetFont {
+                font: PdfFontHandle::External(font_id.clone()),
+                size: Pt(size),
+            });
+            ops.push(Op::ShowText {
+                items: vec![TextItem::Text(text.to_string())],
+            });
+            ops.push(Op::EndTextSection);
+        }
+
         // Title
-        current_layer.use_text(
+        add_text(
+            &mut ops,
             "Market Maker Incentive Report",
             24.0,
-            Mm(left_margin),
-            Mm(y_position),
+            left_margin,
+            y_position,
             &font_bold,
         );
         y_position -= 15.0;
 
         // Header section
-        current_layer.use_text(
-            format!("MM ID: {}", report.mm_id()),
+        add_text(
+            &mut ops,
+            &format!("MM ID: {}", report.mm_id()),
             12.0,
-            Mm(left_margin),
-            Mm(y_position),
+            left_margin,
+            y_position,
             &font,
         );
         y_position -= 6.0;
 
-        current_layer.use_text(
-            format!("Period: {}", report.period()),
+        add_text(
+            &mut ops,
+            &format!("Period: {}", report.period()),
             12.0,
-            Mm(left_margin),
-            Mm(y_position),
+            left_margin,
+            y_position,
             &font,
         );
         y_position -= 6.0;
 
-        current_layer.use_text(
-            format!("Generated: {}", report.generated_at().to_iso8601()),
+        add_text(
+            &mut ops,
+            &format!("Generated: {}", report.generated_at().to_iso8601()),
             12.0,
-            Mm(left_margin),
-            Mm(y_position),
+            left_margin,
+            y_position,
             &font,
         );
         y_position -= 6.0;
 
-        current_layer.use_text(
-            format!("Tier: {}", report.current_tier()),
+        add_text(
+            &mut ops,
+            &format!("Tier: {}", report.current_tier()),
             12.0,
-            Mm(left_margin),
-            Mm(y_position),
+            left_margin,
+            y_position,
             &font,
         );
         y_position -= 15.0;
 
         // Summary section
-        current_layer.use_text("Summary", 16.0, Mm(left_margin), Mm(y_position), &font_bold);
+        add_text(
+            &mut ops,
+            "Summary",
+            16.0,
+            left_margin,
+            y_position,
+            &font_bold,
+        );
         y_position -= 10.0;
 
         let summary = report.summary();
-        current_layer.use_text(
-            format!("Total Trades: {}", summary.total_trades()),
+        add_text(
+            &mut ops,
+            &format!("Total Trades: {}", summary.total_trades()),
             11.0,
-            Mm(left_margin),
-            Mm(y_position),
+            left_margin,
+            y_position,
             &font,
         );
         y_position -= 5.0;
 
-        current_layer.use_text(
-            format!(
+        add_text(
+            &mut ops,
+            &format!(
                 "Total Volume: ${}",
                 format_decimal(summary.total_volume_usd(), 2)
             ),
             11.0,
-            Mm(left_margin),
-            Mm(y_position),
+            left_margin,
+            y_position,
             &font,
         );
         y_position -= 5.0;
 
-        current_layer.use_text(
-            format!(
+        add_text(
+            &mut ops,
+            &format!(
                 "Base Rebates: ${}",
                 format_decimal(summary.total_base_rebates_usd(), 2)
             ),
             11.0,
-            Mm(left_margin),
-            Mm(y_position),
+            left_margin,
+            y_position,
             &font,
         );
         y_position -= 5.0;
 
-        current_layer.use_text(
-            format!(
+        add_text(
+            &mut ops,
+            &format!(
                 "Spread Bonuses: ${}",
                 format_decimal(summary.total_bonuses_usd(), 2)
             ),
             11.0,
-            Mm(left_margin),
-            Mm(y_position),
+            left_margin,
+            y_position,
             &font,
         );
         y_position -= 5.0;
 
-        current_layer.use_text(
-            format!(
+        add_text(
+            &mut ops,
+            &format!(
                 "Net Payout: ${}",
                 format_decimal(summary.net_payout_usd(), 2)
             ),
             11.0,
-            Mm(left_margin),
-            Mm(y_position),
+            left_margin,
+            y_position,
             &font_bold,
         );
         y_position -= 15.0;
@@ -219,46 +264,50 @@ impl ReportExporter for IncentiveReportExporter {
         if let Some(penalties) = report.penalties()
             && penalties.has_penalty()
         {
-            current_layer.use_text(
+            add_text(
+                &mut ops,
                 "Penalties",
                 16.0,
-                Mm(left_margin),
-                Mm(y_position),
+                left_margin,
+                y_position,
                 &font_bold,
             );
             y_position -= 10.0;
 
             if let Some(reason) = penalties.reason() {
-                current_layer.use_text(
-                    format!("Reason: {}", reason),
+                add_text(
+                    &mut ops,
+                    &format!("Reason: {}", reason),
                     11.0,
-                    Mm(left_margin),
-                    Mm(y_position),
+                    left_margin,
+                    y_position,
                     &font,
                 );
                 y_position -= 5.0;
             }
 
             if penalties.should_reduce_capacity() {
-                current_layer.use_text(
-                    format!(
+                add_text(
+                    &mut ops,
+                    &format!(
                         "Capacity Reduction: {}%",
                         format_decimal(penalties.capacity_reduction_pct() * Decimal::from(100), 1)
                     ),
                     11.0,
-                    Mm(left_margin),
-                    Mm(y_position),
+                    left_margin,
+                    y_position,
                     &font,
                 );
                 y_position -= 5.0;
             }
 
             if penalties.should_downgrade_tier() {
-                current_layer.use_text(
+                add_text(
+                    &mut ops,
                     "Tier Downgrade: Yes",
                     11.0,
-                    Mm(left_margin),
-                    Mm(y_position),
+                    left_margin,
+                    y_position,
                     &font,
                 );
                 y_position -= 5.0;
@@ -269,29 +318,32 @@ impl ReportExporter for IncentiveReportExporter {
 
         // Trade details section (if detailed report)
         if let Some(details) = report.trade_details() {
-            current_layer.use_text(
+            add_text(
+                &mut ops,
                 "Trade Details",
                 16.0,
-                Mm(left_margin),
-                Mm(y_position),
+                left_margin,
+                y_position,
                 &font_bold,
             );
             y_position -= 10.0;
 
             for (idx, detail) in details.iter().enumerate() {
                 if y_position < 30.0 {
-                    current_layer.use_text(
+                    add_text(
+                        &mut ops,
                         "(Additional trades truncated due to space limitations)",
                         9.0,
-                        Mm(left_margin),
-                        Mm(y_position),
+                        left_margin,
+                        y_position,
                         &font,
                     );
                     break;
                 }
 
-                current_layer.use_text(
-                    format!(
+                add_text(
+                    &mut ops,
+                    &format!(
                         "{}. Trade {} - ${} - Tier: {} - Rebate: ${}",
                         idx + 1,
                         detail.trade_id(),
@@ -300,23 +352,29 @@ impl ReportExporter for IncentiveReportExporter {
                         format_decimal(detail.rebate_amount(), 2)
                     ),
                     10.0,
-                    Mm(left_margin),
-                    Mm(y_position),
+                    left_margin,
+                    y_position,
                     &font,
                 );
                 y_position -= 5.0;
             }
         }
 
-        // Save PDF to bytes
-        let mut buffer = Vec::new();
-        {
-            let mut writer = BufWriter::new(&mut buffer);
-            doc.save(&mut writer)
-                .map_err(|e| ExportError::PdfGeneration(e.to_string()))?;
-        }
+        // Create page with operations
+        let page = PdfPage::new(Mm(210.0), Mm(297.0), ops);
 
-        Ok(buffer)
+        // Save PDF to bytes
+        let save_options = PdfSaveOptions {
+            subset_fonts: true,
+            ..Default::default()
+        };
+
+        let mut save_warnings = Vec::new();
+        let pdf_bytes = doc
+            .with_pages(vec![page])
+            .save(&save_options, &mut save_warnings);
+
+        Ok(pdf_bytes)
     }
 }
 
