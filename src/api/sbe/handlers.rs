@@ -23,11 +23,10 @@ use crate::domain::value_objects::{CounterpartyId, Instrument, Symbol};
 /// Used by CreateRfq, GetRfq, and CancelRfq handlers.
 #[inline]
 fn rfq_to_response<const T: u16>(rfq: &Rfq, request_id: uuid::Uuid) -> RfqResponse<T> {
-    let symbol_str = rfq.instrument().symbol().to_string();
-    let (base_asset, quote_asset) = match symbol_str.split_once('/') {
-        Some((base, quote)) => (base.to_string(), quote.to_string()),
-        None => (symbol_str.clone(), String::new()),
-    };
+    let symbol = rfq.instrument().symbol();
+    let symbol_str = symbol.to_string();
+    let base_asset = symbol.base_asset().to_string();
+    let quote_asset = symbol.quote_asset().to_string();
 
     let quotes = rfq
         .quotes()
@@ -169,8 +168,10 @@ pub async fn handle_cancel_rfq(
         })?;
 
     // Cancel the RFQ
-    rfq.cancel()
-        .map_err(|e| SbeApiError::Domain(format!("failed to cancel RFQ: {}", e)))?;
+    rfq.cancel().map_err(|e| SbeApiError::InvalidValue {
+        field: "state",
+        message: format!("invalid RFQ state for cancellation: {}", e),
+    })?;
 
     // Persist updated RFQ
     state
@@ -211,14 +212,17 @@ pub async fn handle_execute_trade(
         .quotes()
         .iter()
         .find(|q| q.id() == quote_id)
-        .ok_or_else(|| SbeApiError::Domain(format!("quote not found: {}", quote_id)))?;
+        .ok_or_else(|| SbeApiError::InvalidValue {
+            field: "quote_id",
+            message: format!("quote not found: {}", quote_id),
+        })?;
 
     // Validate quote not expired
     if quote.is_expired() {
-        return Err(SbeApiError::Domain(format!(
-            "quote has expired: {}",
-            quote_id
-        )));
+        return Err(SbeApiError::InvalidValue {
+            field: "valid_until",
+            message: format!("quote has expired: {}", quote_id),
+        });
     }
 
     // Create trade
@@ -527,7 +531,10 @@ mod tests {
             reason: "Test".to_string(),
         };
         let result = handle_cancel_rfq(request, &state).await;
-        assert!(matches!(result, Err(SbeApiError::Domain(_))));
+        assert!(matches!(
+            result,
+            Err(SbeApiError::InvalidValue { field: "state", .. })
+        ));
     }
 
     #[tokio::test]
@@ -627,7 +634,13 @@ mod tests {
             quote_id: Uuid::new_v4(),
         };
         let result = handle_execute_trade(request, &state).await;
-        assert!(matches!(result, Err(SbeApiError::Domain(_))));
+        assert!(matches!(
+            result,
+            Err(SbeApiError::InvalidValue {
+                field: "quote_id",
+                ..
+            })
+        ));
     }
 
     #[tokio::test]
@@ -687,6 +700,12 @@ mod tests {
             quote_id: quote_id.get(),
         };
         let result = handle_execute_trade(request, &state).await;
-        assert!(matches!(result, Err(SbeApiError::Domain(_))));
+        assert!(matches!(
+            result,
+            Err(SbeApiError::InvalidValue {
+                field: "valid_until",
+                ..
+            })
+        ));
     }
 }
