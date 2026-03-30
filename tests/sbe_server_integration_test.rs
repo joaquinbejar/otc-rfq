@@ -126,7 +126,7 @@ async fn sbe_server_create_rfq_roundtrip() {
 }
 
 #[tokio::test]
-async fn sbe_server_unsupported_template_returns_error() {
+async fn sbe_server_cancel_rfq_roundtrip() {
     // Start server
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -154,11 +154,106 @@ async fn sbe_server_unsupported_template_returns_error() {
         }
     };
 
-    // Send CancelRfq request (not implemented yet)
-    let request = CancelRfqRequest {
+    // First, create an RFQ
+    let create_request = CreateRfqRequest {
         request_id: Uuid::new_v4(),
+        client_id: "test-client".to_string(),
+        symbol: "ETH/USD".to_string(),
+        base_asset: "ETH".to_string(),
+        quote_asset: "USD".to_string(),
+        side: OrderSide::Sell,
+        quantity: Quantity::from_decimal(rust_decimal::Decimal::new(5, 0)).unwrap(),
+        timeout_seconds: 600,
+        asset_class: AssetClass::CryptoSpot,
+    };
+
+    let request_bytes = create_request.encode_to_vec().expect("Failed to encode");
+    write_frame(&mut client, &request_bytes)
+        .await
+        .expect("Failed to write");
+
+    let response_bytes = read_frame(&mut client).await.expect("Failed to read");
+    let create_response = CreateRfqResponse::decode(&response_bytes).expect("Failed to decode");
+    let rfq_id = create_response.rfq_id;
+
+    // Now cancel the RFQ
+    let cancel_request = CancelRfqRequest {
+        request_id: Uuid::new_v4(),
+        rfq_id,
+        reason: "Client requested cancellation".to_string(),
+    };
+
+    let cancel_bytes = cancel_request.encode_to_vec().expect("Failed to encode");
+    write_frame(&mut client, &cancel_bytes)
+        .await
+        .expect("Failed to write");
+
+    let cancel_response_bytes = read_frame(&mut client).await.expect("Failed to read");
+    let cancel_response =
+        CancelRfqResponse::decode(&cancel_response_bytes).expect("Failed to decode");
+
+    assert_eq!(cancel_response.request_id, cancel_request.request_id);
+    assert_eq!(cancel_response.rfq_id, rfq_id);
+    assert_eq!(
+        cancel_response.state,
+        otc_rfq::domain::value_objects::rfq_state::RfqState::Cancelled
+    );
+
+    // Verify via GetRfq that it's cancelled
+    let get_request = GetRfqRequest {
+        request_id: Uuid::new_v4(),
+        rfq_id,
+    };
+
+    let get_bytes = get_request.encode_to_vec().expect("Failed to encode");
+    write_frame(&mut client, &get_bytes)
+        .await
+        .expect("Failed to write");
+
+    let get_response_bytes = read_frame(&mut client).await.expect("Failed to read");
+    let get_response = GetRfqResponse::decode(&get_response_bytes).expect("Failed to decode");
+
+    assert_eq!(
+        get_response.state,
+        otc_rfq::domain::value_objects::rfq_state::RfqState::Cancelled
+    );
+
+    let _ = shutdown_tx.send(true);
+}
+
+#[tokio::test]
+async fn sbe_server_execute_trade_not_found() {
+    // Start server
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("Failed to bind");
+    let addr = listener.local_addr().expect("No local addr");
+
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let state = Arc::new(AppState {
+        rfq_repository: Arc::new(MockRfqRepository::new()),
+    });
+    let config = SbeConfig::default();
+    let server = SbeServer::new(listener, state, shutdown_rx, config);
+
+    tokio::spawn(async move {
+        let _ = server.run().await;
+    });
+
+    // Connect client with retry
+    let mut client = loop {
+        match TcpStream::connect(addr).await {
+            Ok(stream) => break stream,
+            Err(_) => {
+                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+            }
+        }
+    };
+
+    // Send ExecuteTrade request with non-existent RFQ
+    let request = ExecuteTradeRequest {
         rfq_id: Uuid::new_v4(),
-        reason: "test".to_string(),
+        quote_id: Uuid::new_v4(),
     };
 
     let request_bytes = request.encode_to_vec().expect("Failed to encode");
@@ -170,8 +265,8 @@ async fn sbe_server_unsupported_template_returns_error() {
     let response_bytes = read_frame(&mut client).await.expect("Failed to read");
     let response = ErrorResponse::decode(&response_bytes).expect("Failed to decode");
 
-    assert_eq!(response.code, 501);
-    assert_eq!(response.message, "not implemented");
+    assert_eq!(response.code, 400);
+    assert!(response.message.contains("RFQ not found"));
 
     let _ = shutdown_tx.send(true);
 }
