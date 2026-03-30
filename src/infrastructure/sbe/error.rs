@@ -49,7 +49,7 @@ pub enum SbeError {
     InvalidTimestamp(String),
 
     /// Arithmetic overflow during offset calculation.
-    #[error("arithmetic overflow during encoding")]
+    #[error("arithmetic overflow during offset calculation")]
     Overflow,
 }
 

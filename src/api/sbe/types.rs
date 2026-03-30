@@ -224,6 +224,17 @@ fn var_string_size(s: &str) -> usize {
     4 + s.len() // 4-byte length prefix + UTF-8 data
 }
 
+/// Encodes a timestamp as non-negative nanoseconds for wire format.
+#[inline]
+fn encode_timestamp_nanos(timestamp: Timestamp, field_name: &str) -> SbeResult<u64> {
+    let nanos_i64 = timestamp
+        .timestamp_nanos()
+        .ok_or_else(|| SbeError::InvalidTimestamp(format!("{} out of range", field_name)))?;
+
+    u64::try_from(nanos_i64)
+        .map_err(|_| SbeError::InvalidTimestamp(format!("{} cannot be negative", field_name)))
+}
+
 // ============================================================================
 // Request Types
 // ============================================================================
@@ -1624,7 +1635,7 @@ impl SbeEncode for ExecuteTradeResponse {
             })?;
 
         // createdAt (nanoseconds)
-        let created_nanos = self.created_at.timestamp_nanos().unwrap_or(0) as u64;
+        let created_nanos = encode_timestamp_nanos(self.created_at, "created_at")?;
         buffer[offset..offset.checked_add(8).ok_or(SbeError::Overflow)?]
             .copy_from_slice(&created_nanos.to_le_bytes());
         offset = offset.checked_add(8).ok_or(SbeError::BufferTooSmall {
@@ -1840,7 +1851,7 @@ impl SbeEncode for QuoteUpdate {
             })?;
 
         // validUntil (nanoseconds)
-        let valid_nanos = self.valid_until.timestamp_nanos().unwrap_or(0) as u64;
+        let valid_nanos = encode_timestamp_nanos(self.valid_until, "valid_until")?;
         buffer[offset..offset.checked_add(8).ok_or(SbeError::Overflow)?]
             .copy_from_slice(&valid_nanos.to_le_bytes());
         offset = offset.checked_add(8).ok_or(SbeError::BufferTooSmall {
@@ -1849,7 +1860,7 @@ impl SbeEncode for QuoteUpdate {
         })?;
 
         // createdAt (nanoseconds)
-        let created_nanos = self.created_at.timestamp_nanos().unwrap_or(0) as u64;
+        let created_nanos = encode_timestamp_nanos(self.created_at, "created_at")?;
         buffer[offset..offset.checked_add(8).ok_or(SbeError::Overflow)?]
             .copy_from_slice(&created_nanos.to_le_bytes());
         offset = offset.checked_add(8).ok_or(SbeError::BufferTooSmall {
@@ -2059,7 +2070,7 @@ impl SbeEncode for RfqStatusUpdate {
         })?;
 
         // timestamp (nanoseconds)
-        let timestamp_nanos = self.timestamp.timestamp_nanos().unwrap_or(0) as u64;
+        let timestamp_nanos = encode_timestamp_nanos(self.timestamp, "timestamp")?;
         buffer[offset..offset.checked_add(8).ok_or(SbeError::Overflow)?]
             .copy_from_slice(&timestamp_nanos.to_le_bytes());
         offset = offset.checked_add(8).ok_or(SbeError::BufferTooSmall {
@@ -2329,6 +2340,46 @@ mod tests {
     }
 
     #[test]
+    fn execute_trade_response_roundtrip() {
+        let response = ExecuteTradeResponse {
+            trade_id: Uuid::new_v4(),
+            rfq_id: Uuid::new_v4(),
+            quote_id: Uuid::new_v4(),
+            price: Price::from_decimal(rust_decimal::Decimal::new(12345, 2)).unwrap(),
+            quantity: Quantity::from_decimal(rust_decimal::Decimal::new(25, 0)).unwrap(),
+            created_at: Timestamp::now(),
+            venue_id: "venue-a".to_string(),
+            venue_execution_ref: "exec-ref-1".to_string(),
+        };
+
+        let mut buffer = vec![0u8; response.encoded_size()];
+        let encoded_size = response.encode(&mut buffer).unwrap();
+
+        assert_eq!(encoded_size, response.encoded_size());
+
+        let decoded = ExecuteTradeResponse::decode(&buffer).unwrap();
+        assert_eq!(response, decoded);
+    }
+
+    #[test]
+    fn execute_trade_response_negative_timestamp_fails_encode() {
+        let response = ExecuteTradeResponse {
+            trade_id: Uuid::new_v4(),
+            rfq_id: Uuid::new_v4(),
+            quote_id: Uuid::new_v4(),
+            price: Price::from_decimal(rust_decimal::Decimal::new(12345, 2)).unwrap(),
+            quantity: Quantity::from_decimal(rust_decimal::Decimal::new(25, 0)).unwrap(),
+            created_at: Timestamp::from_secs(-1).unwrap(),
+            venue_id: "venue-a".to_string(),
+            venue_execution_ref: "exec-ref-1".to_string(),
+        };
+
+        let mut buffer = vec![0u8; response.encoded_size()];
+        let result = response.encode(&mut buffer);
+        assert!(matches!(result, Err(SbeError::InvalidTimestamp(_))));
+    }
+
+    #[test]
     fn subscribe_quotes_request_roundtrip() {
         let request = SubscribeQuotesRequest::new(Uuid::new_v4());
 
@@ -2339,6 +2390,128 @@ mod tests {
 
         let decoded = SubscribeQuotesRequest::decode(&buffer).unwrap();
         assert_eq!(request, decoded);
+    }
+
+    #[test]
+    fn quote_update_roundtrip() {
+        let update = QuoteUpdate {
+            quote_id: Uuid::new_v4(),
+            rfq_id: Uuid::new_v4(),
+            price: Price::from_decimal(rust_decimal::Decimal::new(98765, 3)).unwrap(),
+            quantity: Quantity::from_decimal(rust_decimal::Decimal::new(5, 0)).unwrap(),
+            commission: rust_decimal::Decimal::new(25, 3),
+            valid_until: Timestamp::now(),
+            created_at: Timestamp::now(),
+            venue_type: VenueType::ExternalMM,
+            is_final: true,
+            venue_id: "venue-b".to_string(),
+        };
+
+        let mut buffer = vec![0u8; update.encoded_size()];
+        let encoded_size = update.encode(&mut buffer).unwrap();
+        assert_eq!(encoded_size, update.encoded_size());
+
+        let decoded = QuoteUpdate::decode(&buffer).unwrap();
+        assert_eq!(update, decoded);
+    }
+
+    #[test]
+    fn quote_update_invalid_venue_type_fails_decode() {
+        let update = QuoteUpdate {
+            quote_id: Uuid::new_v4(),
+            rfq_id: Uuid::new_v4(),
+            price: Price::from_decimal(rust_decimal::Decimal::new(98765, 3)).unwrap(),
+            quantity: Quantity::from_decimal(rust_decimal::Decimal::new(5, 0)).unwrap(),
+            commission: rust_decimal::Decimal::new(25, 3),
+            valid_until: Timestamp::now(),
+            created_at: Timestamp::now(),
+            venue_type: VenueType::ExternalMM,
+            is_final: false,
+            venue_id: "venue-b".to_string(),
+        };
+
+        let mut buffer = vec![0u8; update.encoded_size()];
+        update.encode(&mut buffer).unwrap();
+
+        let venue_type_offset = MESSAGE_HEADER_SIZE + 75;
+        buffer[venue_type_offset] = u8::MAX;
+
+        let result = QuoteUpdate::decode(&buffer);
+        assert!(matches!(result, Err(SbeError::InvalidEnumValue(u8::MAX))));
+    }
+
+    #[test]
+    fn rfq_status_update_roundtrip() {
+        let update = RfqStatusUpdate {
+            rfq_id: Uuid::new_v4(),
+            previous_state: RfqState::Created,
+            current_state: RfqState::QuotesReceived,
+            timestamp: Timestamp::now(),
+            message: "quotes received".to_string(),
+        };
+
+        let mut buffer = vec![0u8; update.encoded_size()];
+        let encoded_size = update.encode(&mut buffer).unwrap();
+        assert_eq!(encoded_size, update.encoded_size());
+
+        let decoded = RfqStatusUpdate::decode(&buffer).unwrap();
+        assert_eq!(update, decoded);
+    }
+
+    #[test]
+    fn rfq_status_update_invalid_enum_fails_decode() {
+        let update = RfqStatusUpdate {
+            rfq_id: Uuid::new_v4(),
+            previous_state: RfqState::Created,
+            current_state: RfqState::QuotesReceived,
+            timestamp: Timestamp::now(),
+            message: "quotes received".to_string(),
+        };
+
+        let mut buffer = vec![0u8; update.encoded_size()];
+        update.encode(&mut buffer).unwrap();
+
+        let previous_state_offset = MESSAGE_HEADER_SIZE + SbeUuid::SIZE;
+        buffer[previous_state_offset] = u8::MAX;
+
+        let result = RfqStatusUpdate::decode(&buffer);
+        assert!(matches!(result, Err(SbeError::InvalidEnumValue(u8::MAX))));
+    }
+
+    #[test]
+    fn error_response_roundtrip() {
+        let response = ErrorResponse {
+            request_id: Uuid::new_v4(),
+            rfq_id: Uuid::new_v4(),
+            code: 42,
+            message: "failed to execute trade".to_string(),
+            metadata: "{\"venue\":\"abc\"}".to_string(),
+        };
+
+        let mut buffer = vec![0u8; response.encoded_size()];
+        let encoded_size = response.encode(&mut buffer).unwrap();
+        assert_eq!(encoded_size, response.encoded_size());
+
+        let decoded = ErrorResponse::decode(&buffer).unwrap();
+        assert_eq!(response, decoded);
+    }
+
+    #[test]
+    fn error_response_buffer_too_small_fails_decode() {
+        let response = ErrorResponse {
+            request_id: Uuid::new_v4(),
+            rfq_id: Uuid::new_v4(),
+            code: 500,
+            message: "internal error".to_string(),
+            metadata: "{}".to_string(),
+        };
+
+        let mut buffer = vec![0u8; response.encoded_size()];
+        response.encode(&mut buffer).unwrap();
+
+        let truncated = &buffer[..MESSAGE_HEADER_SIZE + ErrorResponse::BLOCK_LENGTH as usize - 1];
+        let result = ErrorResponse::decode(truncated);
+        assert!(matches!(result, Err(SbeError::BufferTooSmall { .. })));
     }
 
     #[test]

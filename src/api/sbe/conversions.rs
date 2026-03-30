@@ -2,8 +2,8 @@
 //!
 //! Conversions between domain types and SBE API types.
 //!
-//! This module provides bidirectional conversions following the same pattern
-//! as gRPC conversions in `src/api/grpc/conversions.rs`.
+//! This module provides bidirectional conversions using inherent
+//! `from_domain` and `to_domain_*` helper methods on the SBE request types.
 
 use super::types::*;
 use crate::domain::value_objects::{QuoteId, RfqId};
