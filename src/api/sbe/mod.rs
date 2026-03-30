@@ -44,5 +44,5 @@ pub mod server;
 pub mod types;
 
 pub use error::{SbeApiError, SbeApiResult};
-pub use server::SbeServer;
+pub use server::{AppState, SbeServer};
 pub use types::*;

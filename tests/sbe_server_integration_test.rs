@@ -83,11 +83,15 @@ async fn sbe_server_create_rfq_roundtrip() {
         let _ = server.run().await;
     });
 
-    // Give server time to start
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-    // Connect client
-    let mut client = TcpStream::connect(addr).await.expect("Failed to connect");
+    // Connect client with retry to wait for server readiness
+    let mut client = loop {
+        match TcpStream::connect(addr).await {
+            Ok(stream) => break stream,
+            Err(_) => {
+                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+            }
+        }
+    };
 
     // Send CreateRfq request
     let request = CreateRfqRequest {
@@ -140,9 +144,15 @@ async fn sbe_server_unsupported_template_returns_error() {
         let _ = server.run().await;
     });
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-    let mut client = TcpStream::connect(addr).await.expect("Failed to connect");
+    // Connect client with retry
+    let mut client = loop {
+        match TcpStream::connect(addr).await {
+            Ok(stream) => break stream,
+            Err(_) => {
+                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+            }
+        }
+    };
 
     // Send CancelRfq request (not implemented yet)
     let request = CancelRfqRequest {

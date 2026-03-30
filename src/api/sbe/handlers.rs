@@ -110,11 +110,9 @@ pub async fn handle_get_rfq(
 
     // Extract symbol parts (assuming format "BASE/QUOTE")
     let symbol_str = rfq.instrument().symbol().to_string();
-    let parts: Vec<&str> = symbol_str.split('/').collect();
-    let (base_asset, quote_asset) = if parts.len() == 2 {
-        (parts[0].to_string(), parts[1].to_string())
-    } else {
-        (symbol_str.clone(), String::new())
+    let (base_asset, quote_asset) = match symbol_str.split_once('/') {
+        Some((base, quote)) => (base.to_string(), quote.to_string()),
+        None => (symbol_str.clone(), String::new()),
     };
 
     // Convert quotes to SBE format

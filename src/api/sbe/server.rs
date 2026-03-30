@@ -17,7 +17,7 @@ use crate::infrastructure::sbe::{SbeDecode, SbeEncode};
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::watch;
+use tokio::sync::{watch, Semaphore};
 use tracing::{error, info, warn};
 
 /// SBE server configuration.
@@ -54,6 +54,7 @@ pub struct SbeServer {
     state: Arc<AppState>,
     shutdown_rx: watch::Receiver<bool>,
     config: SbeConfig,
+    connection_semaphore: Arc<Semaphore>,
 }
 
 impl SbeServer {
@@ -65,11 +66,13 @@ impl SbeServer {
         shutdown_rx: watch::Receiver<bool>,
         config: SbeConfig,
     ) -> Self {
+        let connection_semaphore = Arc::new(Semaphore::new(config.max_connections));
         Self {
             listener,
             state,
             shutdown_rx,
             config,
+            connection_semaphore,
         }
     }
 
@@ -91,10 +94,24 @@ impl SbeServer {
                 accept_result = self.listener.accept() => {
                     match accept_result {
                         Ok((stream, peer_addr)) => {
+                            // Acquire connection permit
+                            let permit = match Arc::clone(&self.connection_semaphore).try_acquire_owned() {
+                                Ok(p) => p,
+                                Err(_) => {
+                                    warn!(
+                                        peer = %peer_addr,
+                                        max_connections = self.config.max_connections,
+                                        "Connection limit reached, rejecting connection"
+                                    );
+                                    continue;
+                                }
+                            };
+
                             let state = Arc::clone(&self.state);
                             let config = self.config.clone();
 
                             tokio::spawn(async move {
+                                let _permit = permit; // Hold permit for connection lifetime
                                 info!(peer = %peer_addr, "Client connected");
 
                                 if let Err(e) = handle_connection(stream, state, &config).await {
@@ -109,9 +126,19 @@ impl SbeServer {
                         }
                     }
                 }
-                _ = self.shutdown_rx.changed() => {
-                    info!("Shutdown signal received, stopping SBE server");
-                    break;
+                shutdown_result = self.shutdown_rx.changed() => {
+                    match shutdown_result {
+                        Ok(()) => {
+                            if *self.shutdown_rx.borrow_and_update() {
+                                info!("Shutdown signal received, stopping SBE server");
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            warn!(error = %e, "Shutdown watch channel closed; stopping SBE server");
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -166,7 +193,7 @@ async fn handle_connection(
                     Ok(encoded) => encoded,
                     Err(encode_err) => {
                         error!(error = %encode_err, "Failed to encode error response");
-                        Vec::new()
+                        return Err(encode_err.into());
                     }
                 }
             }
@@ -216,7 +243,13 @@ async fn read_frame<R: AsyncRead + Unpin>(
 
     // Read message payload
     let mut buffer = vec![0u8; length];
-    reader.read_exact(&mut buffer).await?;
+    match reader.read_exact(&mut buffer).await {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+            return Err(SbeApiError::ConnectionClosed);
+        }
+        Err(e) => return Err(SbeApiError::Io(e)),
+    }
 
     Ok(buffer)
 }
