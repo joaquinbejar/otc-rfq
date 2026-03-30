@@ -173,7 +173,7 @@ dashmap = "6.1"
 governor = "0.10"
 bytes = "1.11"
 printpdf = "0.9" # DO NOT DOWNGRADE FROM 0.9
-schemars = "0.8" # DO NOT DOWNGRADE FROM 1.2
+schemars = "1.2" # DO NOT DOWNGRADE FROM 1.2
 clap = { version = "4.5", features = ["derive"] }
 
 # Build dependencies
