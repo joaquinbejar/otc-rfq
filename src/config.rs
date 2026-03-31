@@ -206,6 +206,10 @@ pub struct SbeConfig {
     /// Maximum message size in bytes.
     #[serde(default = "default_max_message_size")]
     pub max_message_size: usize,
+
+    /// Maximum subscriptions per connection.
+    #[serde(default = "default_max_subscriptions")]
+    pub max_subscriptions: usize,
 }
 
 impl Default for SbeConfig {
@@ -216,6 +220,7 @@ impl Default for SbeConfig {
             max_connections: default_max_connections(),
             read_timeout_secs: default_request_timeout(),
             max_message_size: default_max_message_size(),
+            max_subscriptions: default_max_subscriptions(),
         }
     }
 }
@@ -599,6 +604,10 @@ fn default_max_concurrent_requests() -> usize {
 
 fn default_max_message_size() -> usize {
     1024 * 1024 // 1 MB
+}
+
+fn default_max_subscriptions() -> usize {
+    100
 }
 
 fn default_service_name() -> String {

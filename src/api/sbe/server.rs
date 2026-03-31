@@ -11,13 +11,14 @@
 
 use crate::api::sbe::error::{SbeApiError, SbeApiResult};
 use crate::api::sbe::handlers;
+use crate::api::sbe::subscriptions::SessionSubscriptions;
 use crate::api::sbe::types::*;
 use crate::application::use_cases::create_rfq::RfqRepository;
 use crate::infrastructure::sbe::{SbeDecode, SbeEncode};
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{Semaphore, watch};
+use tokio::sync::{RwLock, Semaphore, broadcast, mpsc, watch};
 use tracing::{error, info, warn};
 
 /// SBE server configuration.
@@ -29,6 +30,8 @@ pub struct SbeConfig {
     pub read_timeout_secs: u64,
     /// Maximum message size in bytes.
     pub max_message_size: usize,
+    /// Maximum subscriptions per connection.
+    pub max_subscriptions: usize,
 }
 
 impl Default for SbeConfig {
@@ -37,15 +40,32 @@ impl Default for SbeConfig {
             max_connections: 1000,
             read_timeout_secs: 30,
             max_message_size: 1024 * 1024, // 1 MB
+            max_subscriptions: 100,
         }
     }
 }
 
 /// Shared application state for SBE handlers.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AppState {
     /// RFQ repository for persistence.
     pub rfq_repository: Arc<dyn RfqRepository>,
+    /// Event broadcaster for quote updates.
+    pub quote_updates: broadcast::Sender<QuoteUpdate>,
+    /// Event broadcaster for RFQ status updates.
+    pub status_updates: broadcast::Sender<RfqStatusUpdate>,
+}
+
+impl AppState {
+    /// Publishes a quote update event.
+    pub fn publish_quote_update(&self, update: QuoteUpdate) {
+        let _ = self.quote_updates.send(update);
+    }
+
+    /// Publishes an RFQ status update event.
+    pub fn publish_status_update(&self, update: RfqStatusUpdate) {
+        let _ = self.status_updates.send(update);
+    }
 }
 
 /// SBE TCP server.
@@ -148,24 +168,98 @@ impl SbeServer {
     }
 }
 
-/// Handles a single client connection.
+/// Handles a single client connection with subscription support.
+///
+/// Spawns three concurrent tasks:
+/// - Reader: reads frames, handles subscribe/unsubscribe, dispatches requests
+/// - Forwarder: filters broadcast events and forwards to subscribed clients
+/// - Writer: writes all outgoing frames
 ///
 /// # Errors
 ///
 /// Returns error on IO failure or protocol violation.
 async fn handle_connection(
-    mut stream: TcpStream,
+    stream: TcpStream,
     state: Arc<AppState>,
     config: &SbeConfig,
 ) -> anyhow::Result<()> {
-    let (reader, writer) = stream.split();
-    let mut reader = reader;
-    let mut writer = writer;
+    let (reader, writer) = stream.into_split();
+
+    // Channel for sending frames to writer task
+    let (tx, mut rx) = mpsc::channel::<Vec<u8>>(100);
+
+    // Per-connection subscription state
+    let subscriptions = Arc::new(RwLock::new(SessionSubscriptions::new(
+        config.max_subscriptions,
+    )));
+
+    // Subscribe to broadcast channels
+    let mut quote_rx = state.quote_updates.subscribe();
+    let mut status_rx = state.status_updates.subscribe();
+
+    // Clone for tasks
+    let subs_for_forwarder = Arc::clone(&subscriptions);
+    let tx_for_forwarder = tx.clone();
+
+    // Spawn event forwarder task
+    let forwarder = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                Ok(update) = quote_rx.recv() => {
+                    let subs = subs_for_forwarder.read().await;
+                    if subs.is_subscribed_quotes(&update.rfq_id)
+                        && let Ok(encoded) = update.encode_to_vec()
+                    {
+                        let _ = tx_for_forwarder.send(encoded).await;
+                    }
+                }
+                Ok(update) = status_rx.recv() => {
+                    let subs = subs_for_forwarder.read().await;
+                    if subs.is_subscribed_status(&update.rfq_id)
+                        && let Ok(encoded) = update.encode_to_vec()
+                    {
+                        let _ = tx_for_forwarder.send(encoded).await;
+                    }
+                }
+                else => break,
+            }
+        }
+    });
+
+    // Spawn writer task
+    let writer_task = tokio::spawn(async move {
+        let mut writer = writer;
+        while let Some(frame) = rx.recv().await {
+            if write_frame(&mut writer, &frame).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // Reader task (runs in current task)
+    let reader_result = handle_reader(reader, state, config, subscriptions, tx).await;
+
+    // Cleanup
+    forwarder.abort();
+    writer_task.abort();
+
+    reader_result
+}
+
+/// Handles reading frames and processing requests/subscriptions.
+async fn handle_reader(
+    mut reader: tokio::net::tcp::OwnedReadHalf,
+    state: Arc<AppState>,
+    config: &SbeConfig,
+    subscriptions: Arc<RwLock<SessionSubscriptions>>,
+    tx: mpsc::Sender<Vec<u8>>,
+) -> anyhow::Result<()> {
+    let read_timeout = std::time::Duration::from_secs(config.read_timeout_secs);
 
     loop {
         // Read frame with timeout
         let frame = match tokio::time::timeout(
-            std::time::Duration::from_secs(config.read_timeout_secs),
+            read_timeout,
             read_frame(&mut reader, config.max_message_size),
         )
         .await
@@ -177,36 +271,88 @@ async fn handle_connection(
                 return Err(e.into());
             }
             Err(_) => {
-                warn!("Read timeout");
-                break;
+                // Timeout: check if we have active subscriptions
+                let subs = subscriptions.read().await;
+                if subs.count() > 0 {
+                    // Keep connection alive for subscribed clients
+                    continue;
+                } else {
+                    warn!("Read timeout with no active subscriptions");
+                    break;
+                }
             }
         };
 
-        // Dispatch message
-        let response = match dispatch_message(&frame, &state).await {
-            Ok(r) => r,
-            Err(e) => {
-                warn!(error = %e, "Dispatch error");
-                // Try to send error response
-                let error_response = error_to_response(e);
-                match error_response.encode_to_vec() {
-                    Ok(encoded) => encoded,
-                    Err(encode_err) => {
-                        error!(error = %encode_err, "Failed to encode error response");
-                        return Err(encode_err.into());
+        // Extract template ID to route subscription messages
+        if frame.len() < MESSAGE_HEADER_SIZE {
+            continue;
+        }
+        let template_id = u16::from_le_bytes([frame[2], frame[3]]);
+
+        // Handle subscription messages locally
+        let response = match template_id {
+            SUBSCRIBE_QUOTES_REQUEST_TEMPLATE_ID => match SubscribeQuotesRequest::decode(&frame) {
+                Ok(req) => {
+                    let mut subs = subscriptions.write().await;
+                    match subs.subscribe_quotes(req.rfq_id) {
+                        Ok(()) => subscription_ack(req.rfq_id, "subscribed to quotes"),
+                        Err(e) => error_to_response(e).encode_to_vec()?,
+                    }
+                }
+                Err(e) => error_to_response(SbeApiError::SbeEncoding(e)).encode_to_vec()?,
+            },
+            SUBSCRIBE_RFQ_STATUS_REQUEST_TEMPLATE_ID => {
+                match SubscribeRfqStatusRequest::decode(&frame) {
+                    Ok(req) => {
+                        let mut subs = subscriptions.write().await;
+                        match subs.subscribe_status(req.rfq_id) {
+                            Ok(()) => subscription_ack(req.rfq_id, "subscribed to status"),
+                            Err(e) => error_to_response(e).encode_to_vec()?,
+                        }
+                    }
+                    Err(e) => error_to_response(SbeApiError::SbeEncoding(e)).encode_to_vec()?,
+                }
+            }
+            UNSUBSCRIBE_REQUEST_TEMPLATE_ID => match UnsubscribeRequest::decode(&frame) {
+                Ok(req) => {
+                    let mut subs = subscriptions.write().await;
+                    subs.unsubscribe(req.rfq_id);
+                    subscription_ack(req.rfq_id, "unsubscribed")
+                }
+                Err(e) => error_to_response(SbeApiError::SbeEncoding(e)).encode_to_vec()?,
+            },
+            _ => {
+                // Dispatch regular request-response messages
+                match dispatch_message(&frame, &state).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        warn!(error = %e, "Dispatch error");
+                        error_to_response(e).encode_to_vec()?
                     }
                 }
             }
         };
 
-        // Write response
-        if let Err(e) = write_frame(&mut writer, &response).await {
-            warn!(error = %e, "Frame write error");
-            return Err(e.into());
+        // Send response
+        if tx.send(response).await.is_err() {
+            break;
         }
     }
 
     Ok(())
+}
+
+/// Creates a subscription acknowledgment using ErrorResponse with code 0.
+#[inline]
+fn subscription_ack(rfq_id: uuid::Uuid, message: &str) -> Vec<u8> {
+    let ack = ErrorResponse {
+        request_id: uuid::Uuid::nil(),
+        rfq_id,
+        code: 0,
+        message: message.to_string(),
+        metadata: String::new(),
+    };
+    ack.encode_to_vec().unwrap_or_default()
 }
 
 /// Reads a length-prefixed frame from the stream.
@@ -464,8 +610,12 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_unknown_template() {
+        let (quote_updates, _) = tokio::sync::broadcast::channel(16);
+        let (status_updates, _) = tokio::sync::broadcast::channel(16);
         let state = Arc::new(AppState {
             rfq_repository: Arc::new(MockRfqRepository::new()),
+            quote_updates,
+            status_updates,
         });
 
         // Create a frame with invalid template ID
@@ -484,8 +634,12 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_cancel_rfq_not_found() {
+        let (quote_updates, _) = tokio::sync::broadcast::channel(16);
+        let (status_updates, _) = tokio::sync::broadcast::channel(16);
         let state = Arc::new(AppState {
             rfq_repository: Arc::new(MockRfqRepository::new()),
+            quote_updates,
+            status_updates,
         });
 
         let request = CancelRfqRequest {
@@ -503,8 +657,12 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_execute_trade_not_found() {
+        let (quote_updates, _) = tokio::sync::broadcast::channel(16);
+        let (status_updates, _) = tokio::sync::broadcast::channel(16);
         let state = Arc::new(AppState {
             rfq_repository: Arc::new(MockRfqRepository::new()),
+            quote_updates,
+            status_updates,
         });
 
         let request = ExecuteTradeRequest {
