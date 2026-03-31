@@ -8,44 +8,19 @@
     clippy::clone_on_ref_ptr
 )]
 
+mod common;
+
+use common::MockRfqRepository;
 use otc_rfq::api::sbe::server::{AppState, SbeConfig, SbeServer};
 use otc_rfq::api::sbe::types::*;
-use otc_rfq::application::use_cases::create_rfq::RfqRepository;
-use otc_rfq::domain::entities::rfq::Rfq;
 use otc_rfq::domain::value_objects::enums::AssetClass;
-use otc_rfq::domain::value_objects::{OrderSide, Quantity, RfqId};
+use otc_rfq::domain::value_objects::{OrderSide, Quantity};
 use otc_rfq::infrastructure::sbe::{SbeDecode, SbeEncode};
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio::sync::{RwLock, watch};
+use tokio::sync::watch;
 use uuid::Uuid;
-
-#[derive(Debug)]
-struct MockRfqRepository {
-    rfqs: RwLock<HashMap<RfqId, Rfq>>,
-}
-
-impl MockRfqRepository {
-    fn new() -> Self {
-        Self {
-            rfqs: RwLock::new(HashMap::new()),
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl RfqRepository for MockRfqRepository {
-    async fn save(&self, rfq: &Rfq) -> Result<(), String> {
-        self.rfqs.write().await.insert(rfq.id(), rfq.clone());
-        Ok(())
-    }
-
-    async fn find_by_id(&self, id: RfqId) -> Result<Option<Rfq>, String> {
-        Ok(self.rfqs.read().await.get(&id).cloned())
-    }
-}
 
 async fn write_frame(stream: &mut TcpStream, data: &[u8]) -> std::io::Result<()> {
     let length = data.len() as u32;
