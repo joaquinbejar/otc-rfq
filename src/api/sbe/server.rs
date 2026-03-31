@@ -205,23 +205,38 @@ async fn handle_connection(
     let forwarder = tokio::spawn(async move {
         loop {
             tokio::select! {
-                Ok(update) = quote_rx.recv() => {
-                    let subs = subs_for_forwarder.read().await;
-                    if subs.is_subscribed_quotes(&update.rfq_id)
-                        && let Ok(encoded) = update.encode_to_vec()
-                    {
-                        let _ = tx_for_forwarder.send(encoded).await;
+                res = quote_rx.recv() => {
+                    match res {
+                        Ok(update) => {
+                            let subs = subs_for_forwarder.read().await;
+                            if subs.is_subscribed_quotes(&update.rfq_id)
+                                && let Ok(encoded) = update.encode_to_vec()
+                            {
+                                let _ = tx_for_forwarder.send(encoded).await;
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                            warn!(skipped, "quote_rx lagged, skipped updates");
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
                     }
                 }
-                Ok(update) = status_rx.recv() => {
-                    let subs = subs_for_forwarder.read().await;
-                    if subs.is_subscribed_status(&update.rfq_id)
-                        && let Ok(encoded) = update.encode_to_vec()
-                    {
-                        let _ = tx_for_forwarder.send(encoded).await;
+                res = status_rx.recv() => {
+                    match res {
+                        Ok(update) => {
+                            let subs = subs_for_forwarder.read().await;
+                            if subs.is_subscribed_status(&update.rfq_id)
+                                && let Ok(encoded) = update.encode_to_vec()
+                            {
+                                let _ = tx_for_forwarder.send(encoded).await;
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                            warn!(skipped, "status_rx lagged, skipped updates");
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
                     }
                 }
-                else => break,
             }
         }
     });
@@ -295,7 +310,7 @@ async fn handle_reader(
                 Ok(req) => {
                     let mut subs = subscriptions.write().await;
                     match subs.subscribe_quotes(req.rfq_id) {
-                        Ok(()) => subscription_ack(req.rfq_id, "subscribed to quotes"),
+                        Ok(()) => subscription_ack(req.rfq_id, "subscribed to quotes")?,
                         Err(e) => error_to_response(e).encode_to_vec()?,
                     }
                 }
@@ -306,7 +321,7 @@ async fn handle_reader(
                     Ok(req) => {
                         let mut subs = subscriptions.write().await;
                         match subs.subscribe_status(req.rfq_id) {
-                            Ok(()) => subscription_ack(req.rfq_id, "subscribed to status"),
+                            Ok(()) => subscription_ack(req.rfq_id, "subscribed to status")?,
                             Err(e) => error_to_response(e).encode_to_vec()?,
                         }
                     }
@@ -317,7 +332,7 @@ async fn handle_reader(
                 Ok(req) => {
                     let mut subs = subscriptions.write().await;
                     subs.unsubscribe(req.rfq_id);
-                    subscription_ack(req.rfq_id, "unsubscribed")
+                    subscription_ack(req.rfq_id, "unsubscribed")?
                 }
                 Err(e) => error_to_response(SbeApiError::SbeEncoding(e)).encode_to_vec()?,
             },
@@ -343,8 +358,12 @@ async fn handle_reader(
 }
 
 /// Creates a subscription acknowledgment using ErrorResponse with code 0.
+///
+/// # Errors
+///
+/// Returns error if encoding fails.
 #[inline]
-fn subscription_ack(rfq_id: uuid::Uuid, message: &str) -> Vec<u8> {
+fn subscription_ack(rfq_id: uuid::Uuid, message: &str) -> SbeApiResult<Vec<u8>> {
     let ack = ErrorResponse {
         request_id: uuid::Uuid::nil(),
         rfq_id,
@@ -352,7 +371,7 @@ fn subscription_ack(rfq_id: uuid::Uuid, message: &str) -> Vec<u8> {
         message: message.to_string(),
         metadata: String::new(),
     };
-    ack.encode_to_vec().unwrap_or_default()
+    ack.encode_to_vec().map_err(SbeApiError::SbeEncoding)
 }
 
 /// Reads a length-prefixed frame from the stream.

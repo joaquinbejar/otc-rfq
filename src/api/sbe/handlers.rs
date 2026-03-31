@@ -255,12 +255,13 @@ pub async fn handle_execute_trade(
         quote.quantity(),
     );
 
-    // Publish status update (trade execution implies RFQ state change)
-    let previous_state = rfq.state();
+    // Publish status update with actual RFQ state (not hardcoded)
+    // Note: Full execution flow (start_execution -> mark_executed) is handled
+    // by the execution engine, not in this basic handler
     state.publish_status_update(RfqStatusUpdate {
         rfq_id: rfq.id().get(),
-        previous_state,
-        current_state: crate::domain::value_objects::rfq_state::RfqState::Executed,
+        previous_state: rfq.state(),
+        current_state: rfq.state(),
         timestamp: crate::domain::value_objects::timestamp::Timestamp::now(),
         message: "Trade executed".to_string(),
     });
