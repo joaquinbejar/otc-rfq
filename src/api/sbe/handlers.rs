@@ -115,6 +115,15 @@ pub async fn handle_create_rfq(
         .await
         .map_err(|e| SbeApiError::Domain(format!("failed to save RFQ: {}", e)))?;
 
+    // Publish status update
+    state.publish_status_update(RfqStatusUpdate {
+        rfq_id: rfq.id().get(),
+        previous_state: crate::domain::value_objects::rfq_state::RfqState::Created,
+        current_state: rfq.state(),
+        timestamp: crate::domain::value_objects::timestamp::Timestamp::now(),
+        message: "RFQ created".to_string(),
+    });
+
     // Build response using helper
     Ok(rfq_to_response(&rfq, request.request_id))
 }
@@ -167,6 +176,9 @@ pub async fn handle_cancel_rfq(
             message: format!("RFQ not found: {}", rfq_id),
         })?;
 
+    // Capture previous state before cancellation
+    let previous_state = rfq.state();
+
     // Cancel the RFQ
     rfq.cancel().map_err(|e| SbeApiError::InvalidValue {
         field: "state",
@@ -179,6 +191,15 @@ pub async fn handle_cancel_rfq(
         .save(&rfq)
         .await
         .map_err(|e| SbeApiError::Domain(format!("failed to save RFQ: {}", e)))?;
+
+    // Publish status update
+    state.publish_status_update(RfqStatusUpdate {
+        rfq_id: rfq.id().get(),
+        previous_state,
+        current_state: rfq.state(),
+        timestamp: crate::domain::value_objects::timestamp::Timestamp::now(),
+        message: "RFQ cancelled".to_string(),
+    });
 
     // Build response using helper
     Ok(rfq_to_response(&rfq, request.request_id))
@@ -233,6 +254,17 @@ pub async fn handle_execute_trade(
         quote.price(),
         quote.quantity(),
     );
+
+    // Publish status update with actual RFQ state (not hardcoded)
+    // Note: Full execution flow (start_execution -> mark_executed) is handled
+    // by the execution engine, not in this basic handler
+    state.publish_status_update(RfqStatusUpdate {
+        rfq_id: rfq.id().get(),
+        previous_state: rfq.state(),
+        current_state: rfq.state(),
+        timestamp: crate::domain::value_objects::timestamp::Timestamp::now(),
+        message: "Trade executed".to_string(),
+    });
 
     // Build response
     Ok(ExecuteTradeResponse {
@@ -299,8 +331,12 @@ mod tests {
     }
 
     fn create_test_state() -> AppState {
+        let (quote_updates, _) = tokio::sync::broadcast::channel(16);
+        let (status_updates, _) = tokio::sync::broadcast::channel(16);
         AppState {
             rfq_repository: Arc::new(MockRfqRepository::new()),
+            quote_updates,
+            status_updates,
         }
     }
 
@@ -423,8 +459,12 @@ mod tests {
         .build();
 
         let rfq_id = rfq.id();
+        let (quote_updates, _) = tokio::sync::broadcast::channel(16);
+        let (status_updates, _) = tokio::sync::broadcast::channel(16);
         let state = AppState {
             rfq_repository: Arc::new(MockRfqRepository::with_rfq(rfq)),
+            quote_updates,
+            status_updates,
         };
 
         let request = GetRfqRequest {
@@ -464,8 +504,12 @@ mod tests {
         )
         .build();
         let rfq_id = rfq.id();
+        let (quote_updates, _) = tokio::sync::broadcast::channel(16);
+        let (status_updates, _) = tokio::sync::broadcast::channel(16);
         let state = AppState {
             rfq_repository: Arc::new(MockRfqRepository::with_rfq(rfq)),
+            quote_updates,
+            status_updates,
         };
 
         let request = CancelRfqRequest {
@@ -522,8 +566,12 @@ mod tests {
         rfq.cancel().unwrap();
 
         let rfq_id = rfq.id();
+        let (quote_updates, _) = tokio::sync::broadcast::channel(16);
+        let (status_updates, _) = tokio::sync::broadcast::channel(16);
         let state = AppState {
             rfq_repository: Arc::new(MockRfqRepository::with_rfq(rfq)),
+            quote_updates,
+            status_updates,
         };
         let request = CancelRfqRequest {
             request_id: Uuid::new_v4(),
@@ -572,8 +620,12 @@ mod tests {
         let quote_id = quote.id();
         rfq.receive_quote(quote).unwrap();
 
+        let (quote_updates, _) = tokio::sync::broadcast::channel(16);
+        let (status_updates, _) = tokio::sync::broadcast::channel(16);
         let state = AppState {
             rfq_repository: Arc::new(MockRfqRepository::with_rfq(rfq)),
+            quote_updates,
+            status_updates,
         };
         let request = ExecuteTradeRequest {
             rfq_id: rfq_id.get(),
@@ -626,8 +678,12 @@ mod tests {
         )
         .build();
         let rfq_id = rfq.id();
+        let (quote_updates, _) = tokio::sync::broadcast::channel(16);
+        let (status_updates, _) = tokio::sync::broadcast::channel(16);
         let state = AppState {
             rfq_repository: Arc::new(MockRfqRepository::with_rfq(rfq)),
+            quote_updates,
+            status_updates,
         };
         let request = ExecuteTradeRequest {
             rfq_id: rfq_id.get(),
@@ -692,8 +748,12 @@ mod tests {
             Timestamp::now(),
         );
 
+        let (quote_updates, _) = tokio::sync::broadcast::channel(16);
+        let (status_updates, _) = tokio::sync::broadcast::channel(16);
         let state = AppState {
             rfq_repository: Arc::new(MockRfqRepository::with_rfq(rfq)),
+            quote_updates,
+            status_updates,
         };
         let request = ExecuteTradeRequest {
             rfq_id: rfq_id.get(),

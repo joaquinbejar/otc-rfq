@@ -73,8 +73,12 @@ async fn sbe_server_create_rfq_roundtrip() {
     let addr = listener.local_addr().expect("No local addr");
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let (quote_updates, _) = tokio::sync::broadcast::channel(16);
+    let (status_updates, _) = tokio::sync::broadcast::channel(16);
     let state = Arc::new(AppState {
         rfq_repository: Arc::new(MockRfqRepository::new()),
+        quote_updates,
+        status_updates,
     });
     let config = SbeConfig::default();
     let server = SbeServer::new(listener, state, shutdown_rx, config);
@@ -134,8 +138,12 @@ async fn sbe_server_cancel_rfq_roundtrip() {
     let addr = listener.local_addr().expect("No local addr");
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let (quote_updates, _) = tokio::sync::broadcast::channel(16);
+    let (status_updates, _) = tokio::sync::broadcast::channel(16);
     let state = Arc::new(AppState {
         rfq_repository: Arc::new(MockRfqRepository::new()),
+        quote_updates,
+        status_updates,
     });
     let config = SbeConfig::default();
     let server = SbeServer::new(listener, state, shutdown_rx, config);
@@ -230,8 +238,12 @@ async fn sbe_server_execute_trade_not_found() {
     let addr = listener.local_addr().expect("No local addr");
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let (quote_updates, _) = tokio::sync::broadcast::channel(16);
+    let (status_updates, _) = tokio::sync::broadcast::channel(16);
     let state = Arc::new(AppState {
         rfq_repository: Arc::new(MockRfqRepository::new()),
+        quote_updates,
+        status_updates,
     });
     let config = SbeConfig::default();
     let server = SbeServer::new(listener, state, shutdown_rx, config);

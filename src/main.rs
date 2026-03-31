@@ -268,9 +268,11 @@ fn start_sbe_server(
     let max_conn = config.sbe.max_connections;
     let read_timeout = config.sbe.read_timeout_secs;
     let max_size = config.sbe.max_message_size;
+    let max_subs = config.sbe.max_subscriptions;
 
     tokio::spawn(async move {
         use otc_rfq::api::sbe::server::{AppState, SbeConfig, SbeServer};
+        use tokio::sync::broadcast;
 
         let listener = match tokio::net::TcpListener::bind(addr).await {
             Ok(l) => l,
@@ -280,11 +282,19 @@ fn start_sbe_server(
             }
         };
 
-        let state = Arc::new(AppState { rfq_repository });
+        let (quote_updates, _) = broadcast::channel(1024);
+        let (status_updates, _) = broadcast::channel(1024);
+
+        let state = Arc::new(AppState {
+            rfq_repository,
+            quote_updates,
+            status_updates,
+        });
         let server_config = SbeConfig {
             max_connections: max_conn,
             read_timeout_secs: read_timeout,
             max_message_size: max_size,
+            max_subscriptions: max_subs,
         };
         let server = SbeServer::new(listener, state, shutdown_rx, server_config);
 

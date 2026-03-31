@@ -41,6 +41,7 @@ pub mod conversions;
 pub mod error;
 pub mod handlers;
 pub mod server;
+pub mod subscriptions;
 pub mod types;
 
 pub use error::{SbeApiError, SbeApiResult};
