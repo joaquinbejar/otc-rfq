@@ -6,6 +6,7 @@
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
+    clippy::panic,
     clippy::indexing_slicing,
     clippy::useless_vec,
     clippy::clone_on_ref_ptr
@@ -74,15 +75,26 @@ impl SbeTestHarness {
 
     /// Connects a new test client to the server.
     async fn connect(&self) -> SbeTestClient {
-        // Retry loop to wait for server readiness
-        let stream = loop {
-            match TcpStream::connect(self.addr).await {
-                Ok(s) => break s,
-                Err(_) => {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        // Retry loop to wait for server readiness, bounded by an overall timeout
+        let connect_timeout = tokio::time::Duration::from_secs(5);
+
+        let stream = tokio::time::timeout(connect_timeout, async {
+            loop {
+                match TcpStream::connect(self.addr).await {
+                    Ok(s) => break s,
+                    Err(_) => {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+                    }
                 }
             }
-        };
+        })
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "SbeTestHarness::connect: failed to connect to test server at {} within {:?}",
+                self.addr, connect_timeout
+            )
+        });
         SbeTestClient { stream }
     }
 
@@ -179,7 +191,7 @@ impl SbeTestClient {
 // ============================================================================
 
 #[tokio::test]
-async fn lifecycle_create_subscribe_quotes_execute() {
+async fn lifecycle_create_subscribe_quotes() {
     let harness = SbeTestHarness::start().await;
     let mut client = harness.connect().await;
 
@@ -452,10 +464,7 @@ async fn disconnect_cleanup_server_survives() {
         // Client drops here, connection closes
     }
 
-    // Give server time to clean up
-    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-
-    // Second client should connect successfully
+    // Second client should connect successfully (harness.connect has bounded timeout)
     let mut client2 = harness.connect().await;
     let create_req = CreateRfqRequest {
         request_id: Uuid::new_v4(),
