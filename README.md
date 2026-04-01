@@ -444,7 +444,7 @@ cargo add otc-rfq
 docker build -t otc-rfq:latest .
 
 # Run container
-docker run -p 50051:50051 -p 8080:8080 otc-rfq:latest
+docker run -p 50052:50052 -p 8080:8080 otc-rfq:latest
 ```
 
 ---
@@ -457,91 +457,42 @@ Create a `.env` file or set environment variables:
 
 ```bash
 # =============================================================================
-# Database Configuration
+# Core Configuration (match apply_env_overrides in src/config.rs)
 # =============================================================================
-DATABASE_URL=postgres://user:pass@localhost:5432/otc_rfq
-DATABASE_MAX_CONNECTIONS=20
-DATABASE_MIN_CONNECTIONS=5
-
-# =============================================================================
-# Redis Configuration
-# =============================================================================
-REDIS_URL=redis://localhost:6379
-REDIS_MAX_CONNECTIONS=10
-
-# =============================================================================
-# API Configuration
-# =============================================================================
-SBE_PORT=50052
-REST_PORT=8080
-WEBSOCKET_PORT=8081
-
-# =============================================================================
-# Authentication
-# =============================================================================
-JWT_SECRET=your-secret-key-here
-JWT_EXPIRATION_HOURS=24
-API_KEY_HEADER=X-API-Key
-
-# =============================================================================
-# FIX Protocol (TradFi)
-# =============================================================================
-FIX_ENABLED=true
-FIX_SENDER_COMP_ID=OTC_RFQ
-FIX_TARGET_COMP_ID=MARKET_MAKER
-FIX_HOST=fix.marketmaker.com
-FIX_PORT=9878
-
-# =============================================================================
-# DeFi Venues
-# =============================================================================
-ZERO_X_API_KEY=your_api_key
-ZERO_X_BASE_URL=https://api.0x.org
-ONE_INCH_API_KEY=your_api_key
-ONE_INCH_BASE_URL=https://api.1inch.io
-HASHFLOW_API_KEY=your_api_key
-
-# =============================================================================
-# Blockchain
-# =============================================================================
-ETHEREUM_RPC_URL=https://mainnet.infura.io/v3/your-key
-POLYGON_RPC_URL=https://polygon-rpc.com
-ARBITRUM_RPC_URL=https://arb1.arbitrum.io/rpc
-
-# =============================================================================
-# Observability
-# =============================================================================
-LOG_LEVEL=info
-TRACING_ENABLED=true
-METRICS_PORT=9090
+OTC_RFQ_REST_HOST=0.0.0.0
+OTC_RFQ_REST_PORT=8080
+OTC_RFQ_SBE_HOST=0.0.0.0
+OTC_RFQ_SBE_PORT=50052
+OTC_RFQ_LOG_LEVEL=info
+OTC_RFQ_LOG_FORMAT=json
+OTC_RFQ_DATABASE_URL=postgres://user:pass@localhost:5432/otc_rfq
+OTC_RFQ_SERVICE_NAME=otc-rfq
+OTC_RFQ_ENVIRONMENT=production
+OTC_RFQ_CONFIG_FILE=config.toml
 ```
 
 ### Configuration File (TOML)
 
 ```toml
-[server]
-sbe_port = 50052
-rest_port = 8080
-websocket_port = 8081
+[rest]
+host = "0.0.0.0"
+port = 8080
+
+[sbe]
+host = "0.0.0.0"
+port = 50052
+
+[log]
+level = "info"
+format = "json"
 
 [database]
 url = "postgres://user:pass@localhost:5432/otc_rfq"
-max_connections = 20
-min_connections = 5
-
-[redis]
-url = "redis://localhost:6379"
-max_connections = 10
+pool_size = 20
 
 [venues]
 quote_timeout_ms = 500
-min_quotes_required = 1
 max_concurrent_requests = 100
-
-[compliance]
-kyc_required = true
-aml_check_enabled = true
-max_notional_usd = 10000000
 ```
 
 ---
@@ -563,40 +514,23 @@ CONFIG_PATH=./config.toml cargo run --release
 
 ### SBE Client Example
 
-```rust
-use otc_rfq::api::sbe::client::SbeClient;
-use otc_rfq::api::sbe::types::*;
+The SBE API uses binary-encoded messages over a raw TCP connection.
+See the `tests/sbe_api_integration_test.rs` file for full working examples.
+
+```rust,ignore
+use tokio::net::TcpStream;
+use otc_rfq::api::sbe::codec;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Connect to SBE server
-    let mut client = SbeClient::connect("127.0.0.1:50052").await?;
-    
-    // Create RFQ
-    let response = client.create_rfq(CreateRfqRequest {
-        client_id: "DESK_001".to_string(),
-        instrument: Instrument {
-            symbol: "BTC/USD".to_string(),
-            asset_class: AssetClass::CryptoSpot as i32,
-            ..Default::default()
-        }),
-        side: OrderSide::Buy as i32,
-        quantity: Some(Decimal { value: "10.0".to_string() }),
-        timeout_seconds: 30,
-    }).await?;
-    
-    let rfq = response.into_inner().rfq.unwrap();
-    println!("RFQ created: {}", rfq.id);
-    
-    // Stream quotes
-    let mut stream = client.stream_quotes(StreamQuotesRequest {
-        rfq_id: rfq.id.clone(),
-    }).await?.into_inner();
-    
-    while let Some(quote) = stream.message().await? {
-        println!("Quote received: {} @ {}", quote.venue_id, quote.price);
-    }
-    
+    // Connect to the SBE TCP server
+    let stream = TcpStream::connect("127.0.0.1:50052").await?;
+
+    // Encode a CreateRfqRequest using SBE binary framing
+    let request = codec::encode_create_rfq("DESK_001", "BTC/USD", /* ... */);
+    // Send the framed message and read the response
+    // (see integration tests for the full send/receive protocol)
+
     Ok(())
 }
 ```

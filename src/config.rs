@@ -17,12 +17,15 @@
 //!
 //! | Variable | Description | Default |
 //! |----------|-------------|---------|
-//! | `OTC_RFQ_GRPC_HOST` | gRPC server host | `0.0.0.0` |
-//! | `OTC_RFQ_GRPC_PORT` | gRPC server port | `50051` |
 //! | `OTC_RFQ_REST_HOST` | REST server host | `0.0.0.0` |
 //! | `OTC_RFQ_REST_PORT` | REST server port | `8080` |
+//! | `OTC_RFQ_SBE_HOST` | SBE server host | `0.0.0.0` |
+//! | `OTC_RFQ_SBE_PORT` | SBE server port | `50052` |
 //! | `OTC_RFQ_LOG_LEVEL` | Log level | `info` |
 //! | `OTC_RFQ_LOG_FORMAT` | Log format (json/pretty) | `json` |
+//! | `OTC_RFQ_DATABASE_URL` | Database connection URL | `postgres://localhost/otc_rfq` |
+//! | `OTC_RFQ_SERVICE_NAME` | Service name for tracing | `otc-rfq` |
+//! | `OTC_RFQ_ENVIRONMENT` | Environment name | `development` |
 //!
 //! # Examples
 //!
@@ -30,7 +33,8 @@
 //! use otc_rfq::config::AppConfig;
 //!
 //! let config = AppConfig::load()?;
-//! println!("gRPC server: {}:{}", config.grpc.host, config.grpc.port);
+//! println!("SBE server: {}:{}", config.sbe.host, config.sbe.port);
+//! println!("REST server: {}:{}", config.rest.host, config.rest.port);
 //! ```
 
 use serde::{Deserialize, Serialize};
