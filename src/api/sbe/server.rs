@@ -245,9 +245,14 @@ async fn handle_connection(
                             let subs = subs_for_forwarder.read().await;
                             if subs.is_subscribed_quotes(&update.rfq_id)
                                 && let Ok(encoded) = update.encode_to_vec()
-                                && let Err(mpsc::error::TrySendError::Full(_)) = data_tx.try_send(encoded)
                             {
-                                warn!("data channel full, dropped quote update");
+                                match data_tx.try_send(encoded) {
+                                    Ok(()) => {}
+                                    Err(mpsc::error::TrySendError::Full(_)) => {
+                                        warn!("data channel full, dropped quote update");
+                                    }
+                                    Err(mpsc::error::TrySendError::Closed(_)) => break,
+                                }
                             }
                         }
                         Err(broadcast::error::RecvError::Lagged(skipped)) => {
@@ -262,9 +267,14 @@ async fn handle_connection(
                             let subs = subs_for_forwarder.read().await;
                             if subs.is_subscribed_status(&update.rfq_id)
                                 && let Ok(encoded) = update.encode_to_vec()
-                                && let Err(mpsc::error::TrySendError::Full(_)) = data_tx.try_send(encoded)
                             {
-                                warn!("data channel full, dropped status update");
+                                match data_tx.try_send(encoded) {
+                                    Ok(()) => {}
+                                    Err(mpsc::error::TrySendError::Full(_)) => {
+                                        warn!("data channel full, dropped status update");
+                                    }
+                                    Err(mpsc::error::TrySendError::Closed(_)) => break,
+                                }
                             }
                         }
                         Err(broadcast::error::RecvError::Lagged(skipped)) => {
@@ -277,9 +287,12 @@ async fn handle_connection(
         }
     });
 
-    // Spawn writer task (prioritizes control-plane over data-plane)
+    // Spawn writer task (prioritizes control-plane over data-plane).
+    // If the data channel closes (forwarder exits), the writer continues
+    // draining control-plane frames until the reader also closes.
     let writer_task = tokio::spawn(async move {
         let mut writer = writer;
+        let mut data_closed = false;
         loop {
             tokio::select! {
                 biased;
@@ -291,13 +304,15 @@ async fn handle_connection(
                     }
                     None => break,
                 },
-                frame = data_rx.recv() => match frame {
+                frame = data_rx.recv(), if !data_closed => match frame {
                     Some(f) => {
                         if write_frame(&mut writer, &f).await.is_err() {
                             break;
                         }
                     }
-                    None => break,
+                    None => {
+                        data_closed = true;
+                    }
                 },
             }
         }
