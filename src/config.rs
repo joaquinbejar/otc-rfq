@@ -71,58 +71,6 @@ pub enum ConfigError {
 // Server Configuration
 // ============================================================================
 
-/// gRPC server configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GrpcConfig {
-    /// Server host address.
-    #[serde(default = "default_host")]
-    pub host: String,
-
-    /// Server port.
-    #[serde(default = "default_grpc_port")]
-    pub port: u16,
-
-    /// Maximum concurrent connections.
-    #[serde(default = "default_max_connections")]
-    pub max_connections: usize,
-
-    /// Request timeout in seconds.
-    #[serde(default = "default_request_timeout")]
-    pub request_timeout_secs: u64,
-
-    /// Enable reflection service.
-    #[serde(default = "default_true")]
-    pub enable_reflection: bool,
-}
-
-impl Default for GrpcConfig {
-    fn default() -> Self {
-        Self {
-            host: default_host(),
-            port: default_grpc_port(),
-            max_connections: default_max_connections(),
-            request_timeout_secs: default_request_timeout(),
-            enable_reflection: true,
-        }
-    }
-}
-
-impl GrpcConfig {
-    /// Returns the socket address for the gRPC server.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the address cannot be parsed.
-    pub fn socket_addr(&self) -> Result<SocketAddr, ConfigError> {
-        format!("{}:{}", self.host, self.port)
-            .parse()
-            .map_err(|e| ConfigError::InvalidValue {
-                field: "grpc.host:port".to_string(),
-                message: format!("{e}"),
-            })
-    }
-}
-
 /// REST/HTTP server configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RestConfig {
@@ -384,10 +332,6 @@ impl Default for VenueConfig {
 /// Main application configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppConfig {
-    /// gRPC server configuration.
-    #[serde(default)]
-    pub grpc: GrpcConfig,
-
     /// REST server configuration.
     #[serde(default)]
     pub rest: RestConfig,
@@ -452,16 +396,6 @@ impl AppConfig {
 
     /// Applies environment variable overrides to the configuration.
     fn apply_env_overrides(&mut self) {
-        // gRPC configuration
-        if let Ok(host) = std::env::var("OTC_RFQ_GRPC_HOST") {
-            self.grpc.host = host;
-        }
-        if let Ok(port) = std::env::var("OTC_RFQ_GRPC_PORT")
-            && let Ok(p) = port.parse()
-        {
-            self.grpc.port = p;
-        }
-
         // REST configuration
         if let Ok(host) = std::env::var("OTC_RFQ_REST_HOST") {
             self.rest.host = host;
@@ -513,9 +447,6 @@ impl AppConfig {
     ///
     /// Returns an error if validation fails.
     pub fn validate(&self) -> Result<(), ConfigError> {
-        // Validate gRPC address
-        self.grpc.socket_addr()?;
-
         // Validate REST address
         self.rest.socket_addr()?;
 
@@ -544,10 +475,6 @@ impl AppConfig {
 
 fn default_host() -> String {
     "0.0.0.0".to_string()
-}
-
-fn default_grpc_port() -> u16 {
-    50051
 }
 
 fn default_rest_port() -> u16 {
@@ -626,16 +553,8 @@ mod tests {
     #[test]
     fn app_config_default() {
         let config = AppConfig::default();
-        assert_eq!(config.grpc.port, 50051);
         assert_eq!(config.rest.port, 8080);
         assert_eq!(config.log.level, "info");
-    }
-
-    #[test]
-    fn grpc_config_socket_addr() {
-        let config = GrpcConfig::default();
-        let addr = config.socket_addr().unwrap();
-        assert_eq!(addr.port(), 50051);
     }
 
     #[test]
@@ -662,15 +581,6 @@ mod tests {
         let mut config = AppConfig::default();
         config.log.level = "invalid".to_string();
         assert!(config.validate().is_err());
-    }
-
-    #[test]
-    fn grpc_config_invalid_address() {
-        let config = GrpcConfig {
-            host: "invalid host with spaces".to_string(),
-            ..Default::default()
-        };
-        assert!(config.socket_addr().is_err());
     }
 
     #[test]
