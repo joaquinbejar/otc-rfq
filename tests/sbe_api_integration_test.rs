@@ -603,3 +603,81 @@ async fn large_cancel_reason_roundtrip() {
         otc_rfq::domain::value_objects::rfq_state::RfqState::Cancelled
     );
 }
+
+#[tokio::test]
+async fn backpressure_control_plane_responsive() {
+    let harness = SbeTestHarness::start().await;
+    let mut client = harness.connect().await;
+
+    // Create an RFQ so we can query it later
+    let create_req = CreateRfqRequest {
+        request_id: Uuid::new_v4(),
+        client_id: "backpressure-test".to_string(),
+        symbol: "BTC/USD".to_string(),
+        base_asset: "BTC".to_string(),
+        quote_asset: "USD".to_string(),
+        side: OrderSide::Buy,
+        quantity: Quantity::from_decimal(rust_decimal::Decimal::new(1, 0)).unwrap(),
+        timeout_seconds: 300,
+        asset_class: AssetClass::CryptoSpot,
+    };
+    client.send(&create_req).await;
+    let create_resp: CreateRfqResponse = client.recv_decode().await;
+    let rfq_id = create_resp.rfq_id;
+
+    // Subscribe to quotes for this RFQ
+    let sub_req = SubscribeQuotesRequest::new(rfq_id);
+    client.send(&sub_req).await;
+    let ack: ErrorResponse = client.recv_decode().await;
+    assert_eq!(ack.code, 0);
+
+    // Flood the data-plane with many quote updates.
+    // The forwarder uses try_send — excess updates are dropped, not queued.
+    for i in 0..500u32 {
+        let update = QuoteUpdate {
+            quote_id: Uuid::new_v4(),
+            rfq_id,
+            price: Price::new(50000.0 + f64::from(i)).unwrap(),
+            quantity: Quantity::new(1.0).unwrap(),
+            commission: rust_decimal::Decimal::ZERO,
+            valid_until: Timestamp::now(),
+            created_at: Timestamp::now(),
+            venue_type: VenueType::InternalMM,
+            is_final: false,
+            venue_id: format!("venue-{i}"),
+        };
+        harness.publish_quote(update);
+    }
+
+    // Small yield to let forwarder process the burst
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    // Now send a control-plane request (GetRfq) — this MUST respond promptly
+    // even though the data-plane channel may still have queued frames.
+    let get_req = GetRfqRequest {
+        request_id: Uuid::new_v4(),
+        rfq_id,
+    };
+    client.send(&get_req).await;
+
+    // Drain any data-plane frames that arrived before our GetRfq response.
+    // The control-plane response will be prioritized by the biased select,
+    // but some data frames may have been written before the GetRfq was sent.
+    let timeout = tokio::time::Duration::from_secs(2);
+    let response = tokio::time::timeout(timeout, async {
+        loop {
+            let raw = client.recv_raw().await;
+            // Try to decode as GetRfqResponse — if it fails, it's a data frame
+            if let Ok(resp) = GetRfqResponse::decode(&raw)
+                && resp.request_id == get_req.request_id
+            {
+                return resp;
+            }
+        }
+    })
+    .await
+    .expect("Control-plane response must arrive within timeout despite data-plane saturation");
+
+    assert_eq!(response.rfq_id, rfq_id);
+    assert_eq!(response.symbol, "BTC/USD");
+}
