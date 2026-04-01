@@ -5,6 +5,19 @@
 //! This module provides a length-prefixed framing layer on top of the SBE
 //! message codecs, handling connection lifecycle, message dispatch, and
 //! graceful shutdown.
+//!
+//! ## Channel Architecture
+//!
+//! Each connection uses two separate outbound channels to prevent streaming
+//! backpressure from starving request/response traffic:
+//!
+//! - **Control-plane** (`ctrl_tx`): bounded channel for request/response frames.
+//!   Reader sends via `.send().await` — strict delivery, never drops.
+//! - **Data-plane** (`data_tx`): bounded channel for streaming updates.
+//!   Forwarder sends via `try_send()` — lossy under pressure, drops with warning.
+//!
+//! The writer task drains both channels using `select! biased`, always
+//! prioritizing control-plane frames over data-plane frames.
 
 // Buffer bounds are validated before indexing
 #![allow(clippy::indexing_slicing)]
@@ -20,6 +33,18 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{RwLock, Semaphore, broadcast, mpsc, watch};
 use tracing::{error, info, warn};
+
+/// Capacity of the control-plane channel (request/response frames).
+///
+/// Kept small — each request produces exactly one response, so this only
+/// needs to absorb a brief burst while the writer is flushing.
+const CTRL_CHANNEL_CAPACITY: usize = 32;
+
+/// Capacity of the data-plane channel (streaming update frames).
+///
+/// Larger than control-plane to absorb quote/status bursts. When full,
+/// the forwarder drops updates via `try_send` rather than blocking.
+const DATA_CHANNEL_CAPACITY: usize = 256;
 
 /// SBE server configuration.
 #[derive(Debug, Clone)]
@@ -170,10 +195,17 @@ impl SbeServer {
 
 /// Handles a single client connection with subscription support.
 ///
+/// Uses two outbound channels to isolate control-plane (request/response)
+/// from data-plane (streaming updates) traffic. This prevents streaming
+/// backpressure from blocking request responses.
+///
 /// Spawns three concurrent tasks:
-/// - Reader: reads frames, handles subscribe/unsubscribe, dispatches requests
-/// - Forwarder: filters broadcast events and forwards to subscribed clients
-/// - Writer: writes all outgoing frames
+/// - **Reader**: reads frames, handles subscribe/unsubscribe, dispatches
+///   requests, sends responses on `ctrl_tx`
+/// - **Forwarder**: filters broadcast events and pushes to `data_tx` via
+///   `try_send` (lossy — drops under pressure with warning)
+/// - **Writer**: drains both channels with `select! biased`, always
+///   prioritizing control-plane frames
 ///
 /// # Errors
 ///
@@ -185,8 +217,11 @@ async fn handle_connection(
 ) -> anyhow::Result<()> {
     let (reader, writer) = stream.into_split();
 
-    // Channel for sending frames to writer task
-    let (tx, mut rx) = mpsc::channel::<Vec<u8>>(100);
+    // Control-plane channel: request/response frames (strict delivery)
+    let (ctrl_tx, mut ctrl_rx) = mpsc::channel::<Vec<u8>>(CTRL_CHANNEL_CAPACITY);
+
+    // Data-plane channel: streaming update frames (lossy under pressure)
+    let (data_tx, mut data_rx) = mpsc::channel::<Vec<u8>>(DATA_CHANNEL_CAPACITY);
 
     // Per-connection subscription state
     let subscriptions = Arc::new(RwLock::new(SessionSubscriptions::new(
@@ -197,11 +232,10 @@ async fn handle_connection(
     let mut quote_rx = state.quote_updates.subscribe();
     let mut status_rx = state.status_updates.subscribe();
 
-    // Clone for tasks
+    // Clone for forwarder task
     let subs_for_forwarder = Arc::clone(&subscriptions);
-    let tx_for_forwarder = tx.clone();
 
-    // Spawn event forwarder task
+    // Spawn event forwarder task (data-plane, lossy)
     let forwarder = tokio::spawn(async move {
         loop {
             tokio::select! {
@@ -212,7 +246,13 @@ async fn handle_connection(
                             if subs.is_subscribed_quotes(&update.rfq_id)
                                 && let Ok(encoded) = update.encode_to_vec()
                             {
-                                let _ = tx_for_forwarder.send(encoded).await;
+                                match data_tx.try_send(encoded) {
+                                    Ok(()) => {}
+                                    Err(mpsc::error::TrySendError::Full(_)) => {
+                                        warn!("data channel full, dropped quote update");
+                                    }
+                                    Err(mpsc::error::TrySendError::Closed(_)) => break,
+                                }
                             }
                         }
                         Err(broadcast::error::RecvError::Lagged(skipped)) => {
@@ -228,7 +268,13 @@ async fn handle_connection(
                             if subs.is_subscribed_status(&update.rfq_id)
                                 && let Ok(encoded) = update.encode_to_vec()
                             {
-                                let _ = tx_for_forwarder.send(encoded).await;
+                                match data_tx.try_send(encoded) {
+                                    Ok(()) => {}
+                                    Err(mpsc::error::TrySendError::Full(_)) => {
+                                        warn!("data channel full, dropped status update");
+                                    }
+                                    Err(mpsc::error::TrySendError::Closed(_)) => break,
+                                }
                             }
                         }
                         Err(broadcast::error::RecvError::Lagged(skipped)) => {
@@ -241,18 +287,39 @@ async fn handle_connection(
         }
     });
 
-    // Spawn writer task
+    // Spawn writer task (prioritizes control-plane over data-plane).
+    // If the data channel closes (forwarder exits), the writer continues
+    // draining control-plane frames until the reader also closes.
     let writer_task = tokio::spawn(async move {
         let mut writer = writer;
-        while let Some(frame) = rx.recv().await {
-            if write_frame(&mut writer, &frame).await.is_err() {
-                break;
+        let mut data_closed = false;
+        loop {
+            tokio::select! {
+                biased;
+                frame = ctrl_rx.recv() => match frame {
+                    Some(f) => {
+                        if write_frame(&mut writer, &f).await.is_err() {
+                            break;
+                        }
+                    }
+                    None => break,
+                },
+                frame = data_rx.recv(), if !data_closed => match frame {
+                    Some(f) => {
+                        if write_frame(&mut writer, &f).await.is_err() {
+                            break;
+                        }
+                    }
+                    None => {
+                        data_closed = true;
+                    }
+                },
             }
         }
     });
 
-    // Reader task (runs in current task)
-    let reader_result = handle_reader(reader, state, config, subscriptions, tx).await;
+    // Reader task (runs in current task, control-plane)
+    let reader_result = handle_reader(reader, state, config, subscriptions, ctrl_tx).await;
 
     // Cleanup
     forwarder.abort();
@@ -262,12 +329,14 @@ async fn handle_connection(
 }
 
 /// Handles reading frames and processing requests/subscriptions.
+///
+/// Sends all response frames on the control-plane channel (`ctrl_tx`).
 async fn handle_reader(
     mut reader: tokio::net::tcp::OwnedReadHalf,
     state: Arc<AppState>,
     config: &SbeConfig,
     subscriptions: Arc<RwLock<SessionSubscriptions>>,
-    tx: mpsc::Sender<Vec<u8>>,
+    ctrl_tx: mpsc::Sender<Vec<u8>>,
 ) -> anyhow::Result<()> {
     let read_timeout = std::time::Duration::from_secs(config.read_timeout_secs);
 
@@ -348,8 +417,8 @@ async fn handle_reader(
             }
         };
 
-        // Send response
-        if tx.send(response).await.is_err() {
+        // Send response on control-plane channel
+        if ctrl_tx.send(response).await.is_err() {
             break;
         }
     }
