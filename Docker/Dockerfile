@@ -86,8 +86,8 @@ ENV OTC_RFQ_LOG_PATH=/app/logs
 # Expose ports
 # HTTP API port
 EXPOSE 8080
-# gRPC port
-EXPOSE 50051
+# SBE port
+EXPOSE 50052
 # Metrics port
 EXPOSE 9090
 

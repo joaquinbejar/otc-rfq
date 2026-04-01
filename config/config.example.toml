@@ -1,44 +1,46 @@
 # =============================================================================
 # OTC-RFQ Service Configuration Example
 # =============================================================================
-# Copy this file to config.toml and modify as needed
+# Copy this file to config.toml and modify as needed.
+#
+# Section names must match the AppConfig struct fields in src/config.rs.
+# Environment variables (prefixed OTC_RFQ_) override values set here.
 # =============================================================================
 
-[server]
-# HTTP API server configuration
-http_host = "0.0.0.0"
-http_port = 8080
+# REST/HTTP server configuration
+[rest]
+host = "0.0.0.0"
+port = 8080
+max_connections = 1000
+request_timeout_secs = 30
+enable_cors = true
 
-# gRPC server configuration
-grpc_host = "0.0.0.0"
-grpc_port = 50051
+# SBE TCP server configuration
+[sbe]
+host = "0.0.0.0"
+port = 50052
+max_connections = 1000
+read_timeout_secs = 30
+max_message_size = 8192
+max_subscriptions = 100
 
-# Metrics server configuration
-metrics_host = "0.0.0.0"
-metrics_port = 9090
-
-[logging]
-# Log level: trace, debug, info, warn, error
+# Logging configuration
+[log]
 level = "info"
-# Log format: json, pretty
 format = "json"
 
+# Database configuration
+[database]
+url = "postgres://localhost/otc_rfq"
+pool_size = 10
+min_connections = 1
+connection_timeout_secs = 30
+
+# Venue configuration
 [venues]
-# Enable/disable specific venues
 enable_0x = true
 enable_1inch = true
-enable_paraswap = true
-enable_airswap = true
-
-# Venue-specific configuration
-[venues.zero_x]
-api_url = "https://api.0x.org"
-timeout_ms = 5000
-
-[venues.one_inch]
-api_url = "https://api.1inch.io"
-timeout_ms = 5000
-
-[venues.paraswap]
-api_url = "https://apiv5.paraswap.io"
-timeout_ms = 5000
+enable_uniswap = false
+enable_hashflow = false
+quote_timeout_ms = 500
+max_concurrent_requests = 100
