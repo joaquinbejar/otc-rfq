@@ -124,6 +124,13 @@ pub enum VenueError {
         /// Error message.
         message: String,
     },
+
+    /// Operation not supported by this venue.
+    #[error("venue unsupported operation: {operation}")]
+    UnsupportedOperation {
+        /// The operation that is not supported.
+        operation: String,
+    },
 }
 
 impl VenueError {
@@ -262,6 +269,14 @@ impl VenueError {
     pub fn unknown(message: impl Into<String>) -> Self {
         Self::Unknown {
             message: message.into(),
+        }
+    }
+
+    /// Creates an unsupported operation error.
+    #[must_use]
+    pub fn unsupported_operation(operation: impl Into<String>) -> Self {
+        Self::UnsupportedOperation {
+            operation: operation.into(),
         }
     }
 

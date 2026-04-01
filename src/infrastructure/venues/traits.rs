@@ -21,11 +21,13 @@
 //! }
 //! ```
 
+use crate::domain::entities::package_quote::PackageQuote;
 use crate::domain::entities::quote::Quote;
 use crate::domain::entities::rfq::Rfq;
+use crate::domain::value_objects::strategy::Strategy;
 use crate::domain::value_objects::timestamp::Timestamp;
 use crate::domain::value_objects::{Price, Quantity, QuoteId, SettlementMethod, TradeId, VenueId};
-use crate::infrastructure::venues::error::VenueResult;
+use crate::infrastructure::venues::error::{VenueError, VenueResult};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -466,6 +468,48 @@ pub trait VenueAdapter: Send + Sync + fmt::Debug {
             .await
             .map(|h| h.is_operational())
             .unwrap_or(false)
+    }
+
+    /// Returns true if the venue supports multi-leg quoting.
+    ///
+    /// Venues that support multi-leg quoting can provide package quotes
+    /// for entire strategies with a single net price, potentially offering
+    /// better pricing through internal hedging.
+    ///
+    /// Default implementation returns false. Override this method to
+    /// indicate multi-leg support.
+    fn supports_multi_leg(&self) -> bool {
+        false
+    }
+
+    /// Requests a package quote for a multi-leg strategy.
+    ///
+    /// # Arguments
+    ///
+    /// * `strategy` - The multi-leg strategy to quote
+    /// * `rfq` - The RFQ containing quantity and other parameters
+    ///
+    /// # Returns
+    ///
+    /// A package quote with net price and individual leg prices.
+    ///
+    /// # Errors
+    ///
+    /// - `VenueError::UnsupportedOperation` - Venue doesn't support multi-leg
+    /// - `VenueError::Timeout` - Request timed out
+    /// - `VenueError::QuoteUnavailable` - Venue cannot provide a quote
+    /// - `VenueError::InsufficientLiquidity` - Not enough liquidity
+    ///
+    /// # Default Implementation
+    ///
+    /// Returns `VenueError::UnsupportedOperation` by default. Venues that
+    /// support multi-leg quoting should override this method.
+    async fn request_multi_leg_quote(
+        &self,
+        _strategy: &Strategy,
+        _rfq: &Rfq,
+    ) -> VenueResult<PackageQuote> {
+        Err(VenueError::unsupported_operation("multi-leg quoting"))
     }
 }
 

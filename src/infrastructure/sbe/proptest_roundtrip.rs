@@ -22,8 +22,8 @@ use crate::domain::events::rfq_events::{QuoteReceived, RfqCreated};
 use crate::domain::events::trade_events::TradeExecuted;
 use crate::domain::value_objects::timestamp::Timestamp;
 use crate::domain::value_objects::{
-    AssetClass, CounterpartyId, EventId, Instrument, OrderSide, Price, Quantity, QuoteId, RfqId,
-    SettlementMethod, Symbol, TradeId, VenueId,
+    AssetClass, Blockchain, CounterpartyId, EventId, Instrument, OrderSide, Price, Quantity,
+    QuoteId, RfqId, SettlementMethod, Symbol, TradeId, VenueId,
 };
 use crate::infrastructure::sbe::traits::{SbeDecode, SbeEncode};
 use crate::infrastructure::sbe::types::{SbeDecimal, SbeUuid};
@@ -227,6 +227,10 @@ fn create_test_trade_executed(
     price_scale: u32,
     qty_mantissa: i64,
     qty_scale: u32,
+    settlement_method: SettlementMethod,
+    taker_fee: Option<Decimal>,
+    maker_fee: Option<Decimal>,
+    net_fee: Option<Decimal>,
 ) -> Option<TradeExecuted> {
     let price = Price::from_decimal(Decimal::new(price_mantissa.abs().max(1), price_scale)).ok()?;
     let quantity =
@@ -249,7 +253,10 @@ fn create_test_trade_executed(
         counterparty_id: CounterpartyId::new(counterparty_id),
         price,
         quantity,
-        settlement_method: SettlementMethod::OffChain,
+        settlement_method,
+        taker_fee,
+        maker_fee,
+        net_fee,
     })
 }
 
@@ -272,7 +279,8 @@ proptest! {
         if let Some(original) = create_test_trade_executed(
             event_uuid, rfq_uuid, trade_uuid, quote_uuid,
             &venue_id, &counterparty_id,
-            price_mantissa, price_scale, qty_mantissa, qty_scale
+            price_mantissa, price_scale, qty_mantissa, qty_scale,
+            SettlementMethod::OffChain, None, None, None,
         ) {
             let mut buffer = vec![0u8; original.encoded_size() + 100];
             let encoded_size = original.encode(&mut buffer).unwrap();
@@ -285,6 +293,55 @@ proptest! {
             prop_assert_eq!(original.counterparty_id.as_str(), decoded.counterparty_id.as_str());
             prop_assert_eq!(original.price.get(), decoded.price.get());
             prop_assert_eq!(original.quantity.get(), decoded.quantity.get());
+            prop_assert_eq!(original.settlement_method, decoded.settlement_method);
+            prop_assert_eq!(original.taker_fee, decoded.taker_fee);
+            prop_assert_eq!(original.maker_fee, decoded.maker_fee);
+            prop_assert_eq!(original.net_fee, decoded.net_fee);
+        }
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(100))]
+
+    /// Verifies that optional fee fields survive a full SBE roundtrip with arbitrary values.
+    #[test]
+    fn trade_executed_with_fees_roundtrip(
+        event_uuid in any::<[u8; 16]>(),
+        rfq_uuid in any::<[u8; 16]>(),
+        trade_uuid in any::<[u8; 16]>(),
+        quote_uuid in any::<[u8; 16]>(),
+        taker_mantissa in -1_000_000_000i64..1_000_000_000i64,
+        maker_mantissa in -1_000_000_000i64..1_000_000_000i64,
+        net_mantissa in -1_000_000_000i64..1_000_000_000i64,
+        fee_scale in 0u32..6u32,
+        blockchain in prop_oneof![
+            Just(Blockchain::Ethereum),
+            Just(Blockchain::Polygon),
+            Just(Blockchain::Arbitrum),
+            Just(Blockchain::Optimism),
+            Just(Blockchain::Base),
+        ],
+    ) {
+        let taker_fee = Some(Decimal::new(taker_mantissa, fee_scale));
+        let maker_fee = Some(Decimal::new(maker_mantissa, fee_scale));
+        let net_fee = Some(Decimal::new(net_mantissa, fee_scale));
+        let settlement = SettlementMethod::OnChain(blockchain);
+
+        if let Some(original) = create_test_trade_executed(
+            event_uuid, rfq_uuid, trade_uuid, quote_uuid,
+            "venue-1", "cp-1",
+            50_000, 0, 1, 0,
+            settlement, taker_fee, maker_fee, net_fee,
+        ) {
+            let mut buffer = vec![0u8; original.encoded_size() + 100];
+            let encoded_size = original.encode(&mut buffer).unwrap();
+            let decoded = TradeExecuted::decode(&buffer[..encoded_size]).unwrap();
+
+            prop_assert_eq!(original.settlement_method, decoded.settlement_method);
+            prop_assert_eq!(original.taker_fee, decoded.taker_fee);
+            prop_assert_eq!(original.maker_fee, decoded.maker_fee);
+            prop_assert_eq!(original.net_fee, decoded.net_fee);
         }
     }
 }
@@ -385,6 +442,10 @@ fn trade_executed_with_long_identifiers() {
         0,
         150,
         2,
+        SettlementMethod::OnChain(Blockchain::Arbitrum),
+        Some(Decimal::new(100, 2)),
+        Some(Decimal::new(50, 2)),
+        Some(Decimal::new(150, 2)),
     ) {
         let mut buffer = vec![0u8; event.encoded_size() + 100];
         let size = event.encode(&mut buffer).unwrap();
@@ -394,6 +455,10 @@ fn trade_executed_with_long_identifiers() {
             event.counterparty_id.as_str(),
             decoded.counterparty_id.as_str()
         );
+        assert_eq!(event.settlement_method, decoded.settlement_method);
+        assert_eq!(event.taker_fee, decoded.taker_fee);
+        assert_eq!(event.maker_fee, decoded.maker_fee);
+        assert_eq!(event.net_fee, decoded.net_fee);
     }
 }
 

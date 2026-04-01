@@ -9,6 +9,8 @@
 pub mod circuit_breaker;
 pub mod compliance;
 pub mod fill_strategy;
+pub mod multi_leg_quote_collector;
+pub mod package_ranking;
 pub mod price_bounds;
 pub mod quote_aggregation;
 pub mod ranking_strategy;
@@ -23,6 +25,12 @@ pub use compliance::{
     LimitsProvider, LimitsResult, SanctionsProvider, SanctionsResult,
 };
 pub use fill_strategy::{BestPriceFillStrategy, MultiMmFillStrategy, ProRataStrategy};
+pub use multi_leg_quote_collector::{
+    DEFAULT_COLLECTION_TIMEOUT, MultiLegQuoteCollector, VenueQuoteResult,
+};
+pub use package_ranking::{
+    BestNetPriceStrategy, PackageRankingStrategy, RankedPackageQuote, WeightedPackageStrategy,
+};
 pub use price_bounds::{
     FallbackReferencePriceProvider, PriceBoundsValidator, ReferencePriceProvider,
 };
@@ -31,7 +39,8 @@ pub use quote_aggregation::{
 };
 pub use ranking_strategy::{
     BestPriceStrategy, CompositeStrategy, CompositeStrategyBuilder, CostConfig, LowestCostStrategy,
-    LowestSlippageStrategy, RankedQuote, RankingStrategy, WeightedScoreStrategy,
+    LowestSlippageStrategy, RankedQuote, RankingStrategy, RankingWeights,
+    WeightedMultiFactorStrategy, WeightedScoreStrategy,
 };
 pub use retry::{
     AlwaysRetryable, NeverRetryable, RetryError, RetryPolicy, RetryResult, Retryable,

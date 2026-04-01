@@ -47,6 +47,10 @@ pub enum SbeError {
     /// Invalid timestamp value.
     #[error("invalid timestamp: {0}")]
     InvalidTimestamp(String),
+
+    /// Arithmetic overflow during offset calculation.
+    #[error("arithmetic overflow during offset calculation")]
+    Overflow,
 }
 
 /// Result type for SBE operations.

@@ -11,10 +11,10 @@
 //! use otc_rfq::infrastructure::persistence::event_store::{EventStore, StoredEvent};
 //!
 //! // Append an event
-//! event_store.append(&rfq_id, event).await?;
+//! event_store.append(event).await?;
 //!
 //! // Retrieve events for an RFQ
-//! let events = event_store.get_events(&rfq_id).await?;
+//! let events = event_store.get_events(rfq_id).await?;
 //! ```
 
 use crate::domain::events::domain_event::EventType;
@@ -196,7 +196,7 @@ pub trait EventStore: Send + Sync + fmt::Debug {
     /// # Errors
     ///
     /// Returns an error if events cannot be retrieved.
-    async fn get_events(&self, rfq_id: &RfqId) -> EventStoreResult<Vec<StoredEvent>>;
+    async fn get_events(&self, rfq_id: RfqId) -> EventStoreResult<Vec<StoredEvent>>;
 
     /// Retrieves all events since a given timestamp.
     ///
@@ -239,7 +239,7 @@ pub trait EventStore: Send + Sync + fmt::Debug {
     /// # Errors
     ///
     /// Returns an error if the count cannot be retrieved.
-    async fn count_for_rfq(&self, rfq_id: &RfqId) -> EventStoreResult<u64>;
+    async fn count_for_rfq(&self, rfq_id: RfqId) -> EventStoreResult<u64>;
 
     /// Returns the next sequence number for an RFQ.
     ///
@@ -250,7 +250,7 @@ pub trait EventStore: Send + Sync + fmt::Debug {
     /// # Errors
     ///
     /// Returns an error if the sequence cannot be determined.
-    async fn next_sequence(&self, rfq_id: &RfqId) -> EventStoreResult<u64>;
+    async fn next_sequence(&self, rfq_id: RfqId) -> EventStoreResult<u64>;
 }
 
 #[cfg(test)]

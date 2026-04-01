@@ -249,6 +249,48 @@ impl Blockchain {
             _ => None,
         }
     }
+
+    /// Returns the SBE wire encoding tag for this blockchain.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use otc_rfq::domain::value_objects::enums::Blockchain;
+    ///
+    /// assert_eq!(Blockchain::Ethereum.as_u8(), 0);
+    /// assert_eq!(Blockchain::Polygon.as_u8(), 1);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub const fn as_u8(self) -> u8 {
+        self as u8
+    }
+
+    /// Creates a blockchain from its SBE wire encoding tag.
+    ///
+    /// # Returns
+    ///
+    /// `Some(Blockchain)` if the tag is recognized, `None` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use otc_rfq::domain::value_objects::enums::Blockchain;
+    ///
+    /// assert_eq!(Blockchain::from_u8(0), Some(Blockchain::Ethereum));
+    /// assert_eq!(Blockchain::from_u8(99), None);
+    /// ```
+    #[must_use]
+    pub const fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Ethereum),
+            1 => Some(Self::Polygon),
+            2 => Some(Self::Arbitrum),
+            3 => Some(Self::Optimism),
+            4 => Some(Self::Base),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for Blockchain {

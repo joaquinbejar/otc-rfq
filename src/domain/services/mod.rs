@@ -6,5 +6,112 @@
 //! ## Services
 //!
 //! - [`mm_performance::MmPerformanceTracker`]: Market maker performance tracking
+//! - [`block_trade`]: Block trade size thresholds and reporting tiers
+//! - [`block_trade_service`]: Bilateral block trade validation
+//! - [`acceptance_flow`]: Atomic quote acceptance workflow
+//! - [`quote_lock`]: Distributed locking for quote acceptance
+//! - [`risk_check`]: Pre-trade risk validation
+//! - [`last_look`]: Market maker confirmation protocol
+//! - [`conflict_resolver`]: Race condition handling with first-commit-wins
+//! - [`atomic_matcher`]: Atomic all-or-nothing trade execution
+//! - [`lock_manager`]: Distributed lock management
+//! - [`resource_lock`]: Resource lock types for atomic execution
 
+pub mod acceptance_flow;
+pub mod anonymity_service;
+pub mod atomic_matcher;
+pub mod block_trade;
+pub mod block_trade_service;
+pub mod capacity_manager;
+pub mod collateral_lock;
+pub mod compensating_trade;
+pub mod confirmation_service;
+pub mod conflict_resolver;
+pub mod fee_engine;
+pub mod incentive_report_service;
+pub mod incentive_settlement_service;
+pub mod last_look;
+pub mod lock_manager;
+pub mod market_calendar;
+pub mod mm_incentive_service;
 pub mod mm_performance;
+pub mod multi_leg_executor;
+pub mod off_book_executor;
+pub mod package_quote_validator;
+pub mod position_service;
+pub mod price_discovery_service;
+pub mod quote_lock;
+pub mod quote_normalizer;
+pub mod report_export;
+pub mod report_publisher;
+pub mod report_scheduler;
+pub mod resource_lock;
+pub mod risk_check;
+pub mod settlement;
+pub mod streaming_quote;
+pub mod theoretical_pricer;
+
+pub use crate::domain::events::conflict_events::{ConflictType, Resolution};
+pub use acceptance_flow::{
+    AcceptanceFailureReason, AcceptanceFlow, AcceptanceFlowConfig, AcceptanceResult, TradeExecutor,
+};
+pub use block_trade::{BlockTradeConfig, ReportingTier, TierMultiplierError, TierMultipliers};
+pub use block_trade_service::{
+    BlockTradeValidationContext, BlockTradeValidationFailure, BlockTradeValidator,
+    DefaultBlockTradeValidator,
+};
+pub use conflict_resolver::{
+    ConflictContext, ConflictResolver, CounterPriceInfo, FirstCommitWinsResolver,
+};
+pub use last_look::{
+    LastLookConfig, LastLookRejectReason, LastLookResult, LastLookService, LastLookStats,
+    MmLastLookConfig,
+};
+pub use quote_lock::{LockHolderId, QuoteLock, QuoteLockConfig, QuoteLockService};
+pub use risk_check::{RiskCheckConfig, RiskCheckService, RiskResult};
+
+pub use collateral_lock::{CollateralLockHandle, CollateralLockService};
+pub use market_calendar::{
+    MarketCalendarConfig, delay_until_market_close, next_market_close, next_market_close_default,
+};
+pub use off_book_executor::{ExecutedBlockTrade, OffBookExecutor, OffBookExecutorConfig};
+pub use position_service::{Position, PositionUpdateService};
+pub use price_discovery_service::{LiquidityMetrics, PriceDiscoveryConfig, PriceDiscoveryService};
+pub use report_publisher::{PublishResult, ReportPublisher};
+pub use report_scheduler::{ReportScheduler, ReportSchedulerConfig, ScheduledReport};
+pub use settlement::{Fees, SettlementResult, SettlementService};
+pub use theoretical_pricer::TheoreticalPricer;
+
+pub use atomic_matcher::{AtomicExecutionResult, AtomicMatcher, AtomicMatcherConfig};
+pub use compensating_trade::{CompensatingTrade, CompensatingTradeGenerator, LegExecutionResult};
+pub use lock_manager::{LockGuard, LockInfo, LockManager, LockManagerConfig, SharedLockManager};
+pub use multi_leg_executor::{
+    LegExecutor, MultiLegExecutionResult, MultiLegExecutionState, MultiLegExecutor,
+    MultiLegExecutorConfig,
+};
+pub use package_quote_validator::{DEFAULT_TOLERANCE_BPS, PackageQuoteValidator};
+pub use quote_normalizer::QuoteNormalizer;
+pub use resource_lock::{ResourceLock, sort_locks};
+
+pub use anonymity_service::{AnonymityError, AnonymityResult, AnonymityService};
+pub use capacity_manager::{
+    CapacityManager, CapacityManagerConfig, DEFAULT_ADJUSTMENT_PERCENTAGE,
+    DEFAULT_DECREASE_THRESHOLD, DEFAULT_INCREASE_THRESHOLD, MmCapacityRepository,
+};
+pub use incentive_report_service::IncentiveReportService;
+pub use incentive_settlement_service::IncentiveSettlementService;
+pub use mm_incentive_service::{MmIncentiveError, MmIncentiveResult, MmIncentiveService};
+pub use report_export::{ExportError, IncentiveReportExporter, ReportExporter};
+pub use streaming_quote::{
+    StreamingQuoteRejectReason, StreamingQuoteResult, StreamingQuoteService,
+};
+
+pub use fee_engine::{
+    FeeBreakdown, FeeEngine, FeeOverrideProvider, FeeRates, FeeSchedule, NoOpOverrideProvider,
+    NoOpVolumeProvider, VolumeDiscount, VolumeProvider,
+};
+
+pub use confirmation_service::{
+    ConfirmationChannelAdapter, ConfirmationConfig, ConfirmationService,
+    MultiChannelConfirmationService,
+};

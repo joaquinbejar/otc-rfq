@@ -3,7 +3,7 @@
 //! Main entry point for the OTC RFQ service.
 //!
 //! This binary starts the OTC RFQ engine with:
-//! - gRPC server for RFQ service
+//! - SBE server for high-performance trading operations
 //! - REST/HTTP server for API endpoints
 //! - WebSocket support for real-time streaming
 //! - Graceful shutdown handling
@@ -22,7 +22,7 @@
 //! cargo run --bin otc-rfq
 //!
 //! # Run with custom ports
-//! OTC_RFQ_GRPC_PORT=50052 OTC_RFQ_REST_PORT=8081 cargo run --bin otc-rfq
+//! OTC_RFQ_SBE_PORT=50052 OTC_RFQ_REST_PORT=8081 cargo run --bin otc-rfq
 //!
 //! # Run with pretty logging
 //! OTC_RFQ_LOG_FORMAT=pretty cargo run --bin otc-rfq
@@ -64,7 +64,6 @@ async fn main() -> anyhow::Result<()> {
     let mm_performance_tracker = create_mm_performance_tracker();
 
     // Start servers
-    let grpc_handle = start_grpc_server(&config, Arc::clone(&rfq_repository), shutdown_rx.clone());
     let rest_handle = start_rest_server(
         &config,
         Arc::clone(&rfq_repository),
@@ -73,10 +72,11 @@ async fn main() -> anyhow::Result<()> {
         Some(Arc::clone(&mm_performance_tracker)),
         shutdown_rx.clone(),
     );
+    let sbe_handle = start_sbe_server(&config, Arc::clone(&rfq_repository), shutdown_rx.clone());
 
     info!(
-        grpc_addr = %format!("{}:{}", config.grpc.host, config.grpc.port),
         rest_addr = %format!("{}:{}", config.rest.host, config.rest.port),
+        sbe_addr = %format!("{}:{}", config.sbe.host, config.sbe.port),
         "OTC RFQ Engine started successfully"
     );
 
@@ -91,7 +91,7 @@ async fn main() -> anyhow::Result<()> {
     // Wait for servers to finish with timeout
     let shutdown_timeout = tokio::time::Duration::from_secs(30);
     let shutdown_result = tokio::time::timeout(shutdown_timeout, async {
-        let _ = tokio::join!(grpc_handle, rest_handle);
+        let _ = tokio::join!(rest_handle, sbe_handle);
     })
     .await;
 
@@ -156,43 +156,6 @@ fn create_mm_performance_tracker()
     Arc::new(MmPerformanceTracker::with_defaults(repo))
 }
 
-/// Starts the gRPC server.
-fn start_grpc_server(
-    config: &AppConfig,
-    rfq_repository: Arc<dyn otc_rfq::application::use_cases::create_rfq::RfqRepository>,
-    mut shutdown_rx: watch::Receiver<bool>,
-) -> tokio::task::JoinHandle<()> {
-    let addr = match config.grpc.socket_addr() {
-        Ok(a) => a,
-        Err(e) => {
-            error!(error = %e, "Invalid gRPC address");
-            return tokio::spawn(async {});
-        }
-    };
-
-    tokio::spawn(async move {
-        use otc_rfq::api::grpc::RfqServiceImpl;
-        use otc_rfq::api::grpc::proto::rfq_service_server::RfqServiceServer;
-        use tonic::transport::Server;
-
-        let service = RfqServiceImpl::new(rfq_repository);
-
-        info!(addr = %addr, "Starting gRPC server");
-
-        let server = Server::builder()
-            .add_service(RfqServiceServer::new(service))
-            .serve_with_shutdown(addr, async move {
-                let _ = shutdown_rx.changed().await;
-            });
-
-        if let Err(e) = server.await {
-            error!(error = %e, "gRPC server error");
-        }
-
-        info!("gRPC server stopped");
-    })
-}
-
 /// Starts the REST/HTTP server.
 fn start_rest_server(
     config: &AppConfig,
@@ -221,6 +184,8 @@ fn start_rest_server(
             venue_repository,
             trade_repository,
             mm_performance_tracker,
+            mm_incentive_service: None, // TODO: Initialize when VolumeTracker is available
+            fee_engine: None,           // TODO: Initialize when fee configuration is available
         });
 
         let router = create_router(state);
@@ -244,6 +209,59 @@ fn start_rest_server(
         }
 
         info!("REST server stopped");
+    })
+}
+
+/// Starts the SBE TCP server.
+fn start_sbe_server(
+    config: &AppConfig,
+    rfq_repository: Arc<dyn otc_rfq::application::use_cases::create_rfq::RfqRepository>,
+    shutdown_rx: watch::Receiver<bool>,
+) -> tokio::task::JoinHandle<()> {
+    let addr = match config.sbe.socket_addr() {
+        Ok(a) => a,
+        Err(e) => {
+            error!(error = %e, "Invalid SBE address");
+            return tokio::spawn(async {});
+        }
+    };
+
+    let max_conn = config.sbe.max_connections;
+    let read_timeout = config.sbe.read_timeout_secs;
+    let max_size = config.sbe.max_message_size;
+    let max_subs = config.sbe.max_subscriptions;
+
+    tokio::spawn(async move {
+        use otc_rfq::api::sbe::server::{AppState, SbeConfig, SbeServer};
+        use tokio::sync::broadcast;
+
+        let listener = match tokio::net::TcpListener::bind(addr).await {
+            Ok(l) => l,
+            Err(e) => {
+                error!(error = %e, "Failed to bind SBE server");
+                return;
+            }
+        };
+
+        let (quote_updates, _) = broadcast::channel(1024);
+        let (status_updates, _) = broadcast::channel(1024);
+
+        let state = Arc::new(AppState {
+            rfq_repository,
+            quote_updates,
+            status_updates,
+        });
+        let server_config = SbeConfig {
+            max_connections: max_conn,
+            read_timeout_secs: read_timeout,
+            max_message_size: max_size,
+            max_subscriptions: max_subs,
+        };
+        let server = SbeServer::new(listener, state, shutdown_rx, server_config);
+
+        if let Err(e) = server.run().await {
+            error!(error = %e, "SBE server error");
+        }
     })
 }
 

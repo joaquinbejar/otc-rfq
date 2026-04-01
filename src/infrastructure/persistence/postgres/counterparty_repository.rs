@@ -9,6 +9,7 @@ use crate::infrastructure::persistence::traits::{
 };
 use async_trait::async_trait;
 use sqlx::PgPool;
+use std::str::FromStr;
 
 /// PostgreSQL implementation of [`CounterpartyRepository`].
 ///
@@ -43,6 +44,17 @@ impl CounterpartyRepository for PostgresCounterpartyRepository {
             .map_err(|e| RepositoryError::serialization(e.to_string()))?;
         let wallet_addresses = serde_json::to_value(counterparty.wallet_addresses())
             .map_err(|e| RepositoryError::serialization(e.to_string()))?;
+
+        let prefs = counterparty.notification_preferences();
+        let notification_channels: Vec<String> = prefs
+            .enabled_channels()
+            .iter()
+            .map(|c| c.to_string())
+            .collect();
+        let notification_email = prefs.email_address().map(|s| s.to_string());
+        let notification_webhook_url = prefs.webhook_url().map(|s| s.to_string());
+        let notification_grpc_endpoint = prefs.grpc_endpoint().map(|s| s.to_string());
+
         let active = counterparty.is_active();
         let created_at = counterparty.created_at().timestamp_millis();
         let updated_at = counterparty.updated_at().timestamp_millis();
@@ -51,14 +63,20 @@ impl CounterpartyRepository for PostgresCounterpartyRepository {
             r#"
             INSERT INTO counterparties (
                 id, name, counterparty_type, kyc_status, limits,
-                wallet_addresses, active, created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                wallet_addresses, notification_channels, notification_email,
+                notification_webhook_url, notification_grpc_endpoint,
+                active, created_at, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             ON CONFLICT (id) DO UPDATE SET
                 name = EXCLUDED.name,
                 counterparty_type = EXCLUDED.counterparty_type,
                 kyc_status = EXCLUDED.kyc_status,
                 limits = EXCLUDED.limits,
                 wallet_addresses = EXCLUDED.wallet_addresses,
+                notification_channels = EXCLUDED.notification_channels,
+                notification_email = EXCLUDED.notification_email,
+                notification_webhook_url = EXCLUDED.notification_webhook_url,
+                notification_grpc_endpoint = EXCLUDED.notification_grpc_endpoint,
                 active = EXCLUDED.active,
                 updated_at = EXCLUDED.updated_at
             "#,
@@ -69,6 +87,10 @@ impl CounterpartyRepository for PostgresCounterpartyRepository {
         .bind(&kyc_status)
         .bind(&limits)
         .bind(&wallet_addresses)
+        .bind(&notification_channels)
+        .bind(&notification_email)
+        .bind(&notification_webhook_url)
+        .bind(&notification_grpc_endpoint)
         .bind(active)
         .bind(created_at)
         .bind(updated_at)
@@ -85,7 +107,9 @@ impl CounterpartyRepository for PostgresCounterpartyRepository {
         let row: Option<CounterpartyRow> = sqlx::query_as(
             r#"
             SELECT id, name, counterparty_type, kyc_status, limits,
-                   wallet_addresses, active, created_at, updated_at
+                   wallet_addresses, notification_channels, notification_email,
+                   notification_webhook_url, notification_grpc_endpoint,
+                   active, created_at, updated_at
             FROM counterparties WHERE id = $1
             "#,
         )
@@ -101,7 +125,9 @@ impl CounterpartyRepository for PostgresCounterpartyRepository {
         let rows: Vec<CounterpartyRow> = sqlx::query_as(
             r#"
             SELECT id, name, counterparty_type, kyc_status, limits,
-                   wallet_addresses, active, created_at, updated_at
+                   wallet_addresses, notification_channels, notification_email,
+                   notification_webhook_url, notification_grpc_endpoint,
+                   active, created_at, updated_at
             FROM counterparties ORDER BY name ASC
             "#,
         )
@@ -118,7 +144,9 @@ impl CounterpartyRepository for PostgresCounterpartyRepository {
         let rows: Vec<CounterpartyRow> = sqlx::query_as(
             r#"
             SELECT id, name, counterparty_type, kyc_status, limits,
-                   wallet_addresses, active, created_at, updated_at
+                   wallet_addresses, notification_channels, notification_email,
+                   notification_webhook_url, notification_grpc_endpoint,
+                   active, created_at, updated_at
             FROM counterparties WHERE active = true ORDER BY name ASC
             "#,
         )
@@ -137,7 +165,9 @@ impl CounterpartyRepository for PostgresCounterpartyRepository {
         let rows: Vec<CounterpartyRow> = sqlx::query_as(
             r#"
             SELECT id, name, counterparty_type, kyc_status, limits,
-                   wallet_addresses, active, created_at, updated_at
+                   wallet_addresses, notification_channels, notification_email,
+                   notification_webhook_url, notification_grpc_endpoint,
+                   active, created_at, updated_at
             FROM counterparties WHERE LOWER(name) LIKE $1 ORDER BY name ASC
             "#,
         )
@@ -192,6 +222,10 @@ struct CounterpartyRow {
     kyc_status: String,
     limits: serde_json::Value,
     wallet_addresses: serde_json::Value,
+    notification_channels: Vec<String>,
+    notification_email: Option<String>,
+    notification_webhook_url: Option<String>,
+    notification_grpc_endpoint: Option<String>,
     active: bool,
     created_at: i64,
     updated_at: i64,
@@ -214,6 +248,30 @@ impl CounterpartyRow {
             .map_err(|e| RepositoryError::serialization(e.to_string()))?;
         let wallet_addresses: Vec<WalletAddress> = serde_json::from_value(self.wallet_addresses)
             .map_err(|e| RepositoryError::serialization(e.to_string()))?;
+
+        use crate::domain::value_objects::{ConfirmationChannel, NotificationPreferences};
+        let channels: Result<Vec<ConfirmationChannel>, _> = self
+            .notification_channels
+            .iter()
+            .map(|s| {
+                ConfirmationChannel::from_str(s).map_err(|e| {
+                    RepositoryError::serialization(format!(
+                        "invalid confirmation channel '{}': {}",
+                        s, e
+                    ))
+                })
+            })
+            .collect();
+        let channels = channels?;
+
+        let notification_preferences = NotificationPreferences::new(
+            channels,
+            self.notification_email,
+            self.notification_webhook_url,
+            self.notification_grpc_endpoint,
+        )
+        .map_err(|e| RepositoryError::serialization(e.to_string()))?;
+
         let created_at = Timestamp::from_millis(self.created_at).ok_or_else(|| {
             RepositoryError::serialization("invalid created_at timestamp".to_string())
         })?;
@@ -228,6 +286,7 @@ impl CounterpartyRow {
             kyc_status,
             limits,
             wallet_addresses,
+            notification_preferences,
             self.active,
             created_at,
             updated_at,

@@ -208,6 +208,12 @@ pub struct Trade {
     created_at: Timestamp,
     /// When this trade was last updated.
     updated_at: Timestamp,
+    /// Taker fee (positive = fee, negative = rebate).
+    taker_fee: Option<rust_decimal::Decimal>,
+    /// Maker fee (positive = fee, negative = rebate).
+    maker_fee: Option<rust_decimal::Decimal>,
+    /// Net fee (taker + maker).
+    net_fee: Option<rust_decimal::Decimal>,
 }
 
 impl Trade {
@@ -260,6 +266,9 @@ impl Trade {
             version: 1,
             created_at: now,
             updated_at: now,
+            taker_fee: None,
+            maker_fee: None,
+            net_fee: None,
         }
     }
 
@@ -300,6 +309,9 @@ impl Trade {
         version: u64,
         created_at: Timestamp,
         updated_at: Timestamp,
+        taker_fee: Option<rust_decimal::Decimal>,
+        maker_fee: Option<rust_decimal::Decimal>,
+        net_fee: Option<rust_decimal::Decimal>,
     ) -> Self {
         Self {
             id,
@@ -315,6 +327,9 @@ impl Trade {
             version,
             created_at,
             updated_at,
+            taker_fee,
+            maker_fee,
+            net_fee,
         }
     }
 
@@ -422,6 +437,45 @@ impl Trade {
     #[must_use]
     pub fn updated_at(&self) -> Timestamp {
         self.updated_at
+    }
+
+    /// Returns the taker fee, if set.
+    #[inline]
+    #[must_use]
+    pub fn taker_fee(&self) -> Option<rust_decimal::Decimal> {
+        self.taker_fee
+    }
+
+    /// Returns the maker fee, if set.
+    #[inline]
+    #[must_use]
+    pub fn maker_fee(&self) -> Option<rust_decimal::Decimal> {
+        self.maker_fee
+    }
+
+    /// Returns the net fee, if set.
+    #[inline]
+    #[must_use]
+    pub fn net_fee(&self) -> Option<rust_decimal::Decimal> {
+        self.net_fee
+    }
+
+    /// Sets the fees on this trade from a fee breakdown.
+    ///
+    /// # Arguments
+    ///
+    /// * `breakdown` - The fee breakdown to apply
+    pub fn set_fees(&mut self, breakdown: &crate::domain::services::FeeBreakdown) {
+        self.taker_fee = Some(breakdown.taker_fee());
+        self.maker_fee = Some(breakdown.maker_fee());
+        self.net_fee = Some(breakdown.net_fee());
+    }
+
+    /// Returns true if fees have been set on this trade.
+    #[inline]
+    #[must_use]
+    pub fn has_fees(&self) -> bool {
+        self.taker_fee.is_some()
     }
 
     // ========== State Helpers ==========

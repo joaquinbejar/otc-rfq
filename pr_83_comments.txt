@@ -1,0 +1,58 @@
+author:	Copilot (AI)
+association:	none
+edited:	false
+status:	commented
+--
+## Pull request overview
+
+Adds domain + infrastructure building blocks for continuous, two-sided streaming quotes from market makers, including in-memory aggregation and protocol client stubs.
+
+**Changes:**
+- Introduces `StreamingQuote` domain model (price levels, TTL/staleness, spread/mid calculations), config, and stats.
+- Adds `StreamingQuoteService` trait and `CompositeStreamingQuoteService` implementation using `DashMap` for per-instrument quote books, validation, and basic rate limiting.
+- Adds infrastructure module scaffolding and protocol client/config stubs (WebSocket/gRPC/FIX), and re-exports through `infrastructure`.
+
+### Reviewed changes
+
+Copilot reviewed 10 out of 10 changed files in this pull request and generated 8 comments.
+
+<details>
+<summary>Show a summary per file</summary>
+
+| File | Description |
+| ---- | ----------- |
+| src/infrastructure/streaming/websocket.rs | WebSocket streaming client config + stub client type with basic tests. |
+| src/infrastructure/streaming/grpc.rs | gRPC streaming client config + stub client type with basic tests. |
+| src/infrastructure/streaming/fix.rs | FIX streaming client config + stub client type with basic tests. |
+| src/infrastructure/streaming/composite.rs | Core quote aggregation, validation, staleness eviction, rate limiting, and stats. |
+| src/infrastructure/streaming/mod.rs | Wires streaming infrastructure submodules and re-exports public types. |
+| src/infrastructure/mod.rs | Exposes the new `streaming` module and re-exports key streaming types. |
+| src/domain/services/streaming_quote.rs | Defines the domain `StreamingQuoteService` trait and result/rejection types. |
+| src/domain/services/mod.rs | Registers and re-exports streaming quote service types in the domain services module. |
+| src/domain/entities/streaming_quote.rs | Implements streaming quote entity types, config/builder, best-quote aggregation type, and stats. |
+| src/domain/entities/mod.rs | Registers and re-exports the new streaming quote entities/config/constants. |
+</details>
+
+
+
+
+
+
+---
+
+💡 <a href="/Layer-V/otc-rfq/new/main?filename=.github/instructions/*.instructions.md" class="Link--inTextBlock" target="_blank" rel="noopener noreferrer">Add Copilot custom instructions</a> for smarter, more guided reviews. <a href="https://docs.github.com/en/copilot/customizing-copilot/adding-repository-custom-instructions-for-github-copilot" class="Link--inTextBlock" target="_blank" rel="noopener noreferrer">Learn how to get started</a>.
+--
+author:	marty-mcclaw
+association:	member
+edited:	false
+status:	changes requested
+--
+Solid foundation for the streaming quote architecture. The domain models and the composite service pattern are well-aligned with the rest of the project. I found a few concurrency and correctness issues that need to be addressed before merging, specifically around the unregistration logic and some validation bypasses. REQUEST_CHANGES.
+--
+author:	marty-mcclaw
+association:	member
+edited:	false
+status:	approved
+--
+Looks great. The fixes for the TTL cast, the mid_price precision, and the spread validation bypass are solid. I also see the updated book aggregation logic that correctly filters stale quotes. APPROVE.
+--

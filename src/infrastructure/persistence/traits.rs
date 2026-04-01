@@ -12,6 +12,7 @@
 //! - [`TradeRepository`]: Persistence for Trade entities
 //! - [`VenueRepository`]: Persistence for venue configurations
 //! - [`CounterpartyRepository`]: Persistence for counterparty data
+//! - [`BlockTradeRepository`]: Persistence for block trade entities
 //!
 //! # Examples
 //!
@@ -24,10 +25,12 @@
 //! }
 //! ```
 
+use crate::domain::entities::anonymity::IdentityMapping;
+use crate::domain::entities::block_trade::BlockTrade;
 use crate::domain::entities::counterparty::Counterparty;
 use crate::domain::entities::rfq::Rfq;
 use crate::domain::entities::trade::Trade;
-use crate::domain::value_objects::{CounterpartyId, RfqId, TradeId, VenueId};
+use crate::domain::value_objects::{BlockTradeId, CounterpartyId, RfqId, TradeId, VenueId};
 use crate::infrastructure::venues::registry::VenueConfig;
 use async_trait::async_trait;
 use std::fmt;
@@ -198,7 +201,7 @@ pub trait RfqRepository: Send + Sync + fmt::Debug {
     /// Gets an RFQ by ID.
     ///
     /// Returns `None` if the RFQ does not exist.
-    async fn get(&self, id: &RfqId) -> RepositoryResult<Option<Rfq>>;
+    async fn get(&self, id: RfqId) -> RepositoryResult<Option<Rfq>>;
 
     /// Finds all active RFQs.
     ///
@@ -219,7 +222,7 @@ pub trait RfqRepository: Send + Sync + fmt::Debug {
     /// Deletes an RFQ by ID.
     ///
     /// Returns `Ok(true)` if the RFQ was deleted, `Ok(false)` if it didn't exist.
-    async fn delete(&self, id: &RfqId) -> RepositoryResult<bool>;
+    async fn delete(&self, id: RfqId) -> RepositoryResult<bool>;
 
     /// Counts all RFQs.
     async fn count(&self) -> RepositoryResult<u64>;
@@ -242,7 +245,7 @@ pub trait RfqRepository: Send + Sync + fmt::Debug {
 ///     let pending = repo.find_pending_settlement().await?;
 ///     
 ///     // Get a specific trade
-///     let trade = repo.get(&trade_id).await?;
+///     let trade = repo.get(trade_id).await?;
 /// }
 /// ```
 #[async_trait]
@@ -261,12 +264,12 @@ pub trait TradeRepository: Send + Sync + fmt::Debug {
     /// Gets a trade by ID.
     ///
     /// Returns `None` if the trade does not exist.
-    async fn get(&self, id: &TradeId) -> RepositoryResult<Option<Trade>>;
+    async fn get(&self, id: TradeId) -> RepositoryResult<Option<Trade>>;
 
     /// Gets a trade by RFQ ID.
     ///
     /// Returns the trade associated with the specified RFQ, if any.
-    async fn get_by_rfq(&self, rfq_id: &RfqId) -> RepositoryResult<Option<Trade>>;
+    async fn get_by_rfq(&self, rfq_id: RfqId) -> RepositoryResult<Option<Trade>>;
 
     /// Finds trades pending settlement.
     ///
@@ -291,7 +294,7 @@ pub trait TradeRepository: Send + Sync + fmt::Debug {
     /// Deletes a trade by ID.
     ///
     /// Returns `Ok(true)` if the trade was deleted, `Ok(false)` if it didn't exist.
-    async fn delete(&self, id: &TradeId) -> RepositoryResult<bool>;
+    async fn delete(&self, id: TradeId) -> RepositoryResult<bool>;
 
     /// Counts all trades.
     async fn count(&self) -> RepositoryResult<u64>;
@@ -394,6 +397,221 @@ pub trait CounterpartyRepository: Send + Sync + fmt::Debug {
 
     /// Counts active counterparties.
     async fn count_active(&self) -> RepositoryResult<u64>;
+}
+
+/// Repository for delayed trade reports.
+///
+/// Provides persistence operations for delayed report entities,
+/// ensuring reports survive process restarts.
+///
+/// # Examples
+///
+/// ```ignore
+/// use otc_rfq::infrastructure::persistence::traits::DelayedReportRepository;
+///
+/// async fn example(repo: &impl DelayedReportRepository) {
+///     // Get reports ready to publish
+///     let ready = repo.find_ready_to_publish(Timestamp::now()).await?;
+///     
+///     // Mark as published
+///     for report in ready {
+///         repo.mark_published(&report.id(), Timestamp::now()).await?;
+///     }
+/// }
+/// ```
+#[async_trait]
+pub trait DelayedReportRepository: Send + Sync + fmt::Debug {
+    /// Saves a delayed report.
+    ///
+    /// If the report already exists (by ID), it will be updated.
+    async fn save(
+        &self,
+        report: &crate::domain::entities::delayed_report::DelayedReport,
+    ) -> RepositoryResult<()>;
+
+    /// Gets a delayed report by ID.
+    ///
+    /// Returns `None` if the report does not exist.
+    async fn find_by_id(
+        &self,
+        id: &uuid::Uuid,
+    ) -> RepositoryResult<Option<crate::domain::entities::delayed_report::DelayedReport>>;
+
+    /// Gets a delayed report by trade ID.
+    ///
+    /// Returns `None` if no report exists for the trade.
+    async fn find_by_trade_id(
+        &self,
+        trade_id: BlockTradeId,
+    ) -> RepositoryResult<Option<crate::domain::entities::delayed_report::DelayedReport>>;
+
+    /// Finds all pending (unpublished) reports.
+    async fn find_pending(
+        &self,
+    ) -> RepositoryResult<Vec<crate::domain::entities::delayed_report::DelayedReport>>;
+
+    /// Finds reports that are ready to be published.
+    ///
+    /// A report is ready when its `publish_at` time has passed
+    /// and it has not yet been published.
+    async fn find_ready_to_publish(
+        &self,
+        now: crate::domain::value_objects::Timestamp,
+    ) -> RepositoryResult<Vec<crate::domain::entities::delayed_report::DelayedReport>>;
+
+    /// Marks a report as published.
+    ///
+    /// # Errors
+    ///
+    /// Returns `NotFound` if the report does not exist.
+    async fn mark_published(
+        &self,
+        id: &uuid::Uuid,
+        published_at: crate::domain::value_objects::Timestamp,
+    ) -> RepositoryResult<()>;
+
+    /// Deletes a report by ID.
+    ///
+    /// Returns `Ok(true)` if the report was deleted, `Ok(false)` if it didn't exist.
+    async fn delete(&self, id: &uuid::Uuid) -> RepositoryResult<bool>;
+
+    /// Counts all reports.
+    async fn count(&self) -> RepositoryResult<u64>;
+
+    /// Counts pending reports.
+    async fn count_pending(&self) -> RepositoryResult<u64>;
+}
+
+/// Repository for identity mappings.
+///
+/// Provides persistence operations for anonymous RFQ identity mappings.
+/// This repository is critical for compliance and settlement, maintaining
+/// the link between anonymous RFQs and actual requester identities.
+///
+/// # Security
+///
+/// Access to this repository should be restricted to authorized services only.
+/// All operations should be logged for audit purposes.
+///
+/// # Examples
+///
+/// ```ignore
+/// use otc_rfq::infrastructure::persistence::traits::IdentityMappingRepository;
+///
+/// async fn example(repo: &impl IdentityMappingRepository) {
+///     // Save mapping when anonymous RFQ is created
+///     repo.save(&mapping).await?;
+///     
+///     // Retrieve for settlement
+///     let mapping = repo.get(rfq_id).await?;
+///     
+///     // Record identity reveal
+///     repo.record_reveal(rfq_id, &counterparty_id).await?;
+/// }
+/// ```
+#[async_trait]
+pub trait IdentityMappingRepository: Send + Sync + fmt::Debug {
+    /// Saves an identity mapping.
+    ///
+    /// Creates a new mapping for an anonymous RFQ.
+    /// This should be called when an anonymous RFQ is created.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RepositoryError::Duplicate` if a mapping already exists for this RFQ.
+    async fn save(&self, mapping: &IdentityMapping) -> RepositoryResult<()>;
+
+    /// Gets an identity mapping by RFQ ID.
+    ///
+    /// Returns `None` if no mapping exists for the RFQ.
+    ///
+    /// # Security
+    ///
+    /// Callers must verify they have authorization to access identity data.
+    async fn get(&self, rfq_id: RfqId) -> RepositoryResult<Option<IdentityMapping>>;
+
+    /// Records that identity was revealed to a counterparty.
+    ///
+    /// This is an append-only operation for audit purposes.
+    /// Updates the mapping's `revealed_at` timestamp (if first reveal)
+    /// and adds the counterparty to the `revealed_to` list.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RepositoryError::NotFound` if no mapping exists for the RFQ.
+    async fn record_reveal(
+        &self,
+        rfq_id: RfqId,
+        revealed_to: &CounterpartyId,
+    ) -> RepositoryResult<()>;
+
+    /// Finds all mappings that have been revealed.
+    ///
+    /// Returns mappings where identity has been revealed to at least one party.
+    async fn find_revealed(&self) -> RepositoryResult<Vec<IdentityMapping>>;
+
+    /// Finds all mappings that have not been revealed.
+    ///
+    /// Returns mappings where identity has not been revealed to anyone.
+    async fn find_unrevealed(&self) -> RepositoryResult<Vec<IdentityMapping>>;
+
+    /// Deletes an identity mapping by RFQ ID.
+    ///
+    /// Returns `Ok(true)` if the mapping was deleted, `Ok(false)` if it didn't exist.
+    ///
+    /// # Warning
+    ///
+    /// Deleting identity mappings may have compliance implications.
+    /// Consider soft-delete or archival instead.
+    async fn delete(&self, rfq_id: RfqId) -> RepositoryResult<bool>;
+
+    /// Counts all identity mappings.
+    async fn count(&self) -> RepositoryResult<u64>;
+}
+
+/// Repository for block trade persistence.
+///
+/// Provides CRUD operations for pre-arranged bilateral block trades.
+///
+/// # Examples
+///
+/// ```ignore
+/// use otc_rfq::infrastructure::persistence::traits::BlockTradeRepository;
+///
+/// async fn save_block_trade(repo: &impl BlockTradeRepository, trade: &BlockTrade) {
+///     repo.save(trade).await.unwrap();
+/// }
+/// ```
+#[async_trait]
+pub trait BlockTradeRepository: Send + Sync + fmt::Debug {
+    /// Saves a block trade.
+    ///
+    /// Creates a new record or updates an existing one.
+    async fn save(&self, trade: &BlockTrade) -> RepositoryResult<()>;
+
+    /// Finds a block trade by ID.
+    ///
+    /// Returns `None` if the block trade does not exist.
+    async fn find_by_id(&self, id: BlockTradeId) -> RepositoryResult<Option<BlockTrade>>;
+
+    /// Finds all block trades for a counterparty (as buyer or seller).
+    ///
+    /// Returns all block trades where the specified counterparty is either
+    /// the buyer or the seller.
+    async fn find_by_counterparty(
+        &self,
+        counterparty_id: &CounterpartyId,
+    ) -> RepositoryResult<Vec<BlockTrade>>;
+
+    /// Finds all pending block trades (not yet executed, rejected, or failed).
+    ///
+    /// Returns all block trades in non-terminal states.
+    async fn find_pending(&self) -> RepositoryResult<Vec<BlockTrade>>;
+
+    /// Deletes a block trade by ID.
+    ///
+    /// Returns `Ok(true)` if the block trade was deleted, `Ok(false)` if it didn't exist.
+    async fn delete(&self, id: BlockTradeId) -> RepositoryResult<bool>;
 }
 
 #[cfg(test)]

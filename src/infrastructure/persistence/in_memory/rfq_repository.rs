@@ -107,9 +107,9 @@ impl RfqRepository for InMemoryRfqRepository {
         Ok(())
     }
 
-    async fn get(&self, id: &RfqId) -> RepositoryResult<Option<Rfq>> {
+    async fn get(&self, id: RfqId) -> RepositoryResult<Option<Rfq>> {
         let storage = self.storage.read().await;
-        Ok(storage.get(id).cloned())
+        Ok(storage.get(&id).cloned())
     }
 
     async fn find_active(&self) -> RepositoryResult<Vec<Rfq>> {
@@ -151,9 +151,9 @@ impl RfqRepository for InMemoryRfqRepository {
         Ok(rfqs)
     }
 
-    async fn delete(&self, id: &RfqId) -> RepositoryResult<bool> {
+    async fn delete(&self, id: RfqId) -> RepositoryResult<bool> {
         let mut storage = self.storage.write().await;
-        Ok(storage.remove(id).is_some())
+        Ok(storage.remove(&id).is_some())
     }
 
     async fn count(&self) -> RepositoryResult<u64> {
@@ -205,7 +205,7 @@ mod tests {
 
         repo.save(&rfq).await.unwrap();
 
-        let retrieved = repo.get(&id).await.unwrap();
+        let retrieved = repo.get(id).await.unwrap();
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().id(), id);
     }
@@ -215,7 +215,7 @@ mod tests {
         let repo = InMemoryRfqRepository::new();
         let id = RfqId::new_v4();
 
-        let result = repo.get(&id).await.unwrap();
+        let result = repo.get(id).await.unwrap();
         assert!(result.is_none());
     }
 
@@ -264,12 +264,12 @@ mod tests {
         repo.save(&rfq).await.unwrap();
         assert_eq!(repo.count().await.unwrap(), 1);
 
-        let deleted = repo.delete(&id).await.unwrap();
+        let deleted = repo.delete(id).await.unwrap();
         assert!(deleted);
         assert_eq!(repo.count().await.unwrap(), 0);
 
         // Delete again returns false
-        let deleted_again = repo.delete(&id).await.unwrap();
+        let deleted_again = repo.delete(id).await.unwrap();
         assert!(!deleted_again);
     }
 

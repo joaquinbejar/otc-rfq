@@ -83,6 +83,12 @@ lint:
 	@echo "🔍 Running clippy lints..."
 	cargo clippy --all-targets --all-features -- -D warnings
 
+.PHONY: lint-ci
+lint-ci:
+	@echo "🔍 Running clippy lints (CI mode - matches GitHub Actions exactly)..."
+	@echo "⚠️  This will fail on warnings that are allowed locally but forbidden in CI"
+	cargo clippy --all-targets --all-features -- -D warnings
+
 .PHONY: lint-fix
 lint-fix:
 	@echo "🔧 Auto-fixing lint issues..."
@@ -107,8 +113,8 @@ pre-push: fix fmt lint-fix test doc
 
 .PHONY: doc
 doc:
-	@echo "📚 Generating documentation..."
-	cargo doc --no-deps --document-private-items
+	@echo "📚 Generating documentation (with warnings as errors)..."
+	RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
 
 .PHONY: doc-open
 doc-open:

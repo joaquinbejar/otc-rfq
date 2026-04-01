@@ -1,656 +1,447 @@
-//! # Domain Errors
+//! # Domain Error Types
 //!
-//! Typed domain error definitions.
-//!
-//! This module provides the [`DomainError`] enum for representing
-//! domain-level errors with numeric error codes.
-//!
-//! # Error Code Ranges
-//!
-//! - **1000-1999**: Validation errors
-//! - **2000-2999**: State errors
-//! - **3000-3999**: Compliance errors
-//! - **4000-4999**: Arithmetic errors
-//!
-//! # Examples
-//!
-//! ```
-//! use otc_rfq::domain::errors::DomainError;
-//!
-//! let error = DomainError::InvalidPrice("price must be positive".to_string());
-//! assert_eq!(error.code(), 1001);
-//! ```
+//! Defines the core error types for domain operations.
 
-use crate::domain::value_objects::arithmetic::ArithmeticError;
-use crate::domain::value_objects::negotiation_state::NegotiationState;
-use crate::domain::value_objects::price::Price;
-use crate::domain::value_objects::quantity::Quantity;
-use crate::domain::value_objects::rfq_state::RfqState;
-use rust_decimal::Decimal;
-use thiserror::Error;
+use std::fmt;
 
-/// Domain-level error with numeric error codes.
-///
-/// Provides typed errors for domain operations with consistent
-/// error codes for logging and API responses.
-///
-/// # Error Code Ranges
-///
-/// | Range | Category |
-/// |-------|----------|
-/// | 1000-1999 | Validation errors |
-/// | 2000-2999 | State errors |
-/// | 3000-3999 | Compliance errors |
-/// | 4000-4999 | Arithmetic errors |
-///
-/// # Examples
-///
-/// ```
-/// use otc_rfq::domain::errors::DomainError;
-///
-/// let error = DomainError::InvalidQuantity("quantity must be positive".to_string());
-/// assert!(error.code() >= 1000 && error.code() < 2000);
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum DomainError {
-    // ========================================================================
-    // Validation Errors (1000-1999)
-    // ========================================================================
-    /// Invalid price value.
-    #[error("invalid price: {0}")]
-    InvalidPrice(String),
-
-    /// Invalid quantity value.
-    #[error("invalid quantity: {0}")]
-    InvalidQuantity(String),
-
-    /// Invalid state value.
-    #[error("invalid state: {0}")]
-    InvalidState(String),
-
-    /// Invalid symbol format.
-    #[error("invalid symbol: {0}")]
-    InvalidSymbol(String),
-
-    /// Invalid identifier.
-    #[error("invalid identifier: {0}")]
-    InvalidId(String),
-
-    /// Invalid timestamp.
-    #[error("invalid timestamp: {0}")]
-    InvalidTimestamp(String),
-
-    /// No reference price available for the instrument.
-    #[error("no reference price available for instrument")]
-    NoReferencePrice,
-
-    /// Proposed price is outside acceptable bounds relative to reference.
-    #[error(
-        "price out of bounds: proposed {proposed}, reference {reference}, deviation {deviation_pct} (fractional), max tolerance {max_tolerance_pct} (fractional)"
-    )]
-    PriceOutOfBounds {
-        /// The proposed price.
-        proposed: Price,
-        /// The reference price.
-        reference: Price,
-        /// The actual deviation as a fractional percentage.
-        deviation_pct: Decimal,
-        /// The maximum allowed tolerance as a fractional percentage.
-        max_tolerance_pct: Decimal,
-    },
-
-    /// Generic validation error.
-    #[error("validation error: {0}")]
-    ValidationError(String),
-
-    // ========================================================================
-    // State Errors (2000-2999)
-    // ========================================================================
-    /// Invalid state transition attempted.
-    #[error("invalid state transition from {from} to {to}")]
-    InvalidStateTransition {
-        /// The current state.
-        from: RfqState,
-        /// The attempted target state.
-        to: RfqState,
-    },
-
-    /// Quote has expired.
-    #[error("quote expired: {0}")]
-    QuoteExpired(String),
-
-    /// Quote not found.
-    #[error("quote not found: {0}")]
-    QuoteNotFound(String),
-
-    /// RFQ not found.
-    #[error("rfq not found: {0}")]
-    RfqNotFound(String),
-
-    /// Trade not found.
-    #[error("trade not found: {0}")]
-    TradeNotFound(String),
-
-    /// Entity already exists.
-    #[error("entity already exists: {0}")]
-    AlreadyExists(String),
-
-    /// Operation not allowed in current state.
-    #[error("operation not allowed: {0}")]
-    OperationNotAllowed(String),
-
-    /// Negotiation not found.
-    #[error("negotiation not found: {0}")]
-    NegotiationNotFound(String),
-
-    /// Maximum negotiation rounds reached.
-    #[error("maximum negotiation rounds reached: {max_rounds}")]
-    MaxNegotiationRoundsReached {
-        /// The configured maximum number of rounds.
-        max_rounds: u8,
-    },
-
-    /// Counter-quote does not improve on the previous price.
-    #[error("no price improvement: previous {previous}, proposed {proposed}")]
-    NoPriceImprovement {
-        /// The previous best price.
-        previous: Price,
-        /// The proposed counter price.
-        proposed: Price,
-    },
-
-    /// Negotiation has expired.
-    #[error("negotiation expired: {0}")]
-    NegotiationExpired(String),
-
-    /// Invalid negotiation state transition.
-    #[error("invalid negotiation state transition from {from} to {to}")]
-    InvalidNegotiationStateTransition {
-        /// The current negotiation state.
-        from: NegotiationState,
-        /// The attempted target negotiation state.
-        to: NegotiationState,
-    },
-
-    /// Insufficient liquidity to fill the requested quantity.
-    #[error("insufficient liquidity: available {available}, requested {requested}")]
-    InsufficientLiquidity {
-        /// The total available quantity across all quotes.
-        available: Quantity,
-        /// The requested target quantity.
-        requested: Quantity,
-    },
-
-    /// Fill quantity does not meet the minimum quantity threshold.
-    #[error("minimum quantity not met: filled {filled}, minimum {minimum}")]
-    MinQuantityNotMet {
-        /// The actual filled quantity.
-        filled: Quantity,
-        /// The required minimum quantity.
-        minimum: Quantity,
-    },
-
-    /// Sum of allocations does not match the target quantity.
-    #[error("allocation mismatch: allocated {allocated}, target {target}")]
-    AllocationMismatch {
-        /// The total allocated quantity.
-        allocated: Quantity,
-        /// The expected target quantity.
-        target: Quantity,
-    },
-
-    // ========================================================================
-    // Compliance Errors (3000-3999)
-    // ========================================================================
-    /// Compliance check blocked the operation.
-    #[error("compliance blocked: {0}")]
-    ComplianceBlocked(String),
-
-    /// KYC verification failed.
-    #[error("kyc verification failed: {0}")]
-    KycFailed(String),
-
-    /// Counterparty not authorized.
-    #[error("counterparty not authorized: {0}")]
-    CounterpartyNotAuthorized(String),
-
-    /// Trading limit exceeded.
-    #[error("trading limit exceeded: {0}")]
-    TradingLimitExceeded(String),
-
-    /// Instrument not allowed.
-    #[error("instrument not allowed: {0}")]
-    InstrumentNotAllowed(String),
-
-    // ========================================================================
-    // Arithmetic Errors (4000-4999)
-    // ========================================================================
-    /// Arithmetic overflow.
-    #[error("arithmetic overflow")]
-    Overflow,
-
-    /// Arithmetic underflow.
-    #[error("arithmetic underflow")]
-    Underflow,
-
-    /// Division by zero.
-    #[error("division by zero")]
-    DivisionByZero,
-
-    /// Invalid arithmetic value.
-    #[error("invalid arithmetic value: {0}")]
-    InvalidArithmeticValue(String),
-}
-
-impl DomainError {
-    /// Returns the numeric error code.
-    ///
-    /// # Error Code Ranges
-    ///
-    /// - 1000-1999: Validation errors
-    /// - 2000-2999: State errors
-    /// - 3000-3999: Compliance errors
-    /// - 4000-4999: Arithmetic errors
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use otc_rfq::domain::errors::DomainError;
-    ///
-    /// assert_eq!(DomainError::InvalidPrice("test".to_string()).code(), 1001);
-    /// assert_eq!(DomainError::Overflow.code(), 4001);
-    /// ```
-    #[must_use]
-    pub const fn code(&self) -> u16 {
-        match self {
-            // Validation errors (1000-1999)
-            Self::InvalidPrice(_) => 1001,
-            Self::InvalidQuantity(_) => 1002,
-            Self::InvalidState(_) => 1003,
-            Self::InvalidSymbol(_) => 1004,
-            Self::InvalidId(_) => 1005,
-            Self::InvalidTimestamp(_) => 1006,
-            Self::NoReferencePrice => 1007,
-            Self::PriceOutOfBounds { .. } => 1008,
-            Self::ValidationError(_) => 1099,
-
-            // State errors (2000-2999)
-            Self::InvalidStateTransition { .. } => 2001,
-            Self::QuoteExpired(_) => 2002,
-            Self::QuoteNotFound(_) => 2003,
-            Self::RfqNotFound(_) => 2004,
-            Self::TradeNotFound(_) => 2005,
-            Self::AlreadyExists(_) => 2006,
-            Self::NegotiationNotFound(_) => 2007,
-            Self::MaxNegotiationRoundsReached { .. } => 2008,
-            Self::NoPriceImprovement { .. } => 2009,
-            Self::NegotiationExpired(_) => 2010,
-            Self::InvalidNegotiationStateTransition { .. } => 2011,
-            Self::InsufficientLiquidity { .. } => 2012,
-            Self::MinQuantityNotMet { .. } => 2013,
-            Self::AllocationMismatch { .. } => 2014,
-            Self::OperationNotAllowed(_) => 2099,
-
-            // Compliance errors (3000-3999)
-            Self::ComplianceBlocked(_) => 3001,
-            Self::KycFailed(_) => 3002,
-            Self::CounterpartyNotAuthorized(_) => 3003,
-            Self::TradingLimitExceeded(_) => 3004,
-            Self::InstrumentNotAllowed(_) => 3005,
-
-            // Arithmetic errors (4000-4999)
-            Self::Overflow => 4001,
-            Self::Underflow => 4002,
-            Self::DivisionByZero => 4003,
-            Self::InvalidArithmeticValue(_) => 4004,
-        }
-    }
-
-    /// Returns the error category name.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use otc_rfq::domain::errors::DomainError;
-    ///
-    /// assert_eq!(DomainError::InvalidPrice("test".to_string()).category(), "validation");
-    /// assert_eq!(DomainError::QuoteExpired("test".to_string()).category(), "state");
-    /// ```
-    #[must_use]
-    pub const fn category(&self) -> &'static str {
-        match self.code() {
-            1000..=1999 => "validation",
-            2000..=2999 => "state",
-            3000..=3999 => "compliance",
-            4000..=4999 => "arithmetic",
-            _ => "unknown",
-        }
-    }
-
-    /// Returns true if this is a validation error.
-    #[inline]
-    #[must_use]
-    pub const fn is_validation_error(&self) -> bool {
-        matches!(self.code(), 1000..=1999)
-    }
-
-    /// Returns true if this is a state error.
-    #[inline]
-    #[must_use]
-    pub const fn is_state_error(&self) -> bool {
-        matches!(self.code(), 2000..=2999)
-    }
-
-    /// Returns true if this is a compliance error.
-    #[inline]
-    #[must_use]
-    pub const fn is_compliance_error(&self) -> bool {
-        matches!(self.code(), 3000..=3999)
-    }
-
-    /// Returns true if this is an arithmetic error.
-    #[inline]
-    #[must_use]
-    pub const fn is_arithmetic_error(&self) -> bool {
-        matches!(self.code(), 4000..=4999)
-    }
-}
-
-impl From<ArithmeticError> for DomainError {
-    fn from(err: ArithmeticError) -> Self {
-        match err {
-            ArithmeticError::Overflow => Self::Overflow,
-            ArithmeticError::Underflow => Self::Underflow,
-            ArithmeticError::DivisionByZero => Self::DivisionByZero,
-            ArithmeticError::InvalidValue(msg) => Self::InvalidArithmeticValue(msg.to_string()),
-        }
-    }
-}
-
-/// Result type for domain operations.
+/// Result type alias for domain operations.
 pub type DomainResult<T> = Result<T, DomainError>;
 
-#[cfg(test)]
-#[allow(clippy::unwrap_used)]
-mod tests {
-    use super::*;
+/// Domain-level error types.
+///
+/// These errors represent failures in business logic and domain rules.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DomainError {
+    // Validation errors (1000-1999)
+    /// Invalid quantity value.
+    InvalidQuantity(String),
+    /// Invalid price value.
+    InvalidPrice(String),
+    /// General validation error.
+    ValidationError(String),
+    /// Quote has expired.
+    QuoteExpired(String),
+    /// Quote not found.
+    QuoteNotFound(String),
+    /// Insufficient liquidity for fill.
+    InsufficientLiquidity {
+        /// Requested quantity.
+        requested: crate::domain::value_objects::Quantity,
+        /// Available quantity.
+        available: crate::domain::value_objects::Quantity,
+    },
+    /// Minimum quantity not met.
+    MinQuantityNotMet {
+        /// Actual fill quantity.
+        filled: crate::domain::value_objects::Quantity,
+        /// Minimum quantity required.
+        minimum: crate::domain::value_objects::Quantity,
+    },
+    /// Allocation mismatch.
+    AllocationMismatch {
+        /// Allocated quantity.
+        allocated: crate::domain::value_objects::Quantity,
+        /// Target quantity.
+        target: crate::domain::value_objects::Quantity,
+    },
+    /// No reference price available.
+    NoReferencePrice,
+    /// Division by zero.
+    DivisionByZero,
+    /// Price out of bounds.
+    PriceOutOfBounds {
+        /// Proposed price.
+        proposed: crate::domain::value_objects::Price,
+        /// Reference price.
+        reference: crate::domain::value_objects::Price,
+        /// Actual deviation percentage.
+        deviation_pct: rust_decimal::Decimal,
+        /// Maximum tolerance percentage.
+        max_tolerance_pct: rust_decimal::Decimal,
+    },
 
-    mod error_codes {
-        use super::*;
+    // State errors (2000-2999)
+    /// Invalid state transition for RFQ.
+    InvalidStateTransition {
+        /// Source state.
+        from: crate::domain::value_objects::RfqState,
+        /// Target state.
+        to: crate::domain::value_objects::RfqState,
+    },
+    /// Generic state transition error (for non-RFQ entities).
+    GenericStateTransitionError {
+        /// Source state name.
+        from: String,
+        /// Target state name.
+        to: String,
+    },
+    /// Invalid state for operation.
+    InvalidState(String),
+    /// Operation not allowed in current state.
+    OperationNotAllowed(String),
+    /// Trade not in correct state for off-book execution.
+    InvalidTradeStateForExecution {
+        /// Expected state.
+        expected: String,
+        /// Actual state.
+        actual: String,
+    },
 
-        #[test]
-        fn validation_errors_in_range() {
-            let errors: Vec<DomainError> = vec![
-                DomainError::InvalidPrice("test".to_string()),
-                DomainError::InvalidQuantity("test".to_string()),
-                DomainError::InvalidState("test".to_string()),
-                DomainError::InvalidSymbol("test".to_string()),
-                DomainError::InvalidId("test".to_string()),
-                DomainError::InvalidTimestamp("test".to_string()),
-                DomainError::NoReferencePrice,
-                DomainError::PriceOutOfBounds {
-                    proposed: Price::new(105.0).unwrap(),
-                    reference: Price::new(100.0).unwrap(),
-                    deviation_pct: Decimal::new(5, 2),
-                    max_tolerance_pct: Decimal::new(5, 2),
-                },
-                DomainError::ValidationError("test".to_string()),
-            ];
+    // Lock and concurrency errors
+    /// Quote is already locked.
+    QuoteLocked(String),
+    /// Failed to acquire lock.
+    LockAcquisitionFailed(String),
+    /// Conflict detected during concurrent operation.
+    ConflictDetected(String),
 
-            for error in errors {
-                let code = error.code();
-                assert!(
-                    (1000..2000).contains(&code),
-                    "Expected validation error code 1000-1999, got {}",
-                    code
-                );
-                assert!(error.is_validation_error());
-                assert_eq!(error.category(), "validation");
+    // Risk and compliance errors (3000-3999)
+    /// Risk check failed.
+    RiskCheckFailed(String),
+    /// Unauthorized counterparty.
+    UnauthorizedCounterparty(String),
+    /// Validation failed.
+    ValidationFailed(String),
+    /// Invalid negotiation state transition.
+    InvalidNegotiationStateTransition {
+        /// Source state.
+        from: crate::domain::value_objects::NegotiationState,
+        /// Target state.
+        to: crate::domain::value_objects::NegotiationState,
+    },
+    /// Maximum negotiation rounds reached.
+    MaxNegotiationRoundsReached {
+        /// Maximum rounds allowed.
+        max_rounds: u8,
+    },
+    /// No price improvement in counter-quote.
+    NoPriceImprovement {
+        /// Previous price.
+        previous: crate::domain::value_objects::Price,
+        /// Proposed price.
+        proposed: crate::domain::value_objects::Price,
+    },
+
+    // Execution errors
+    /// Last-look was rejected by market maker.
+    LastLookRejected(String),
+    /// Last-look timed out.
+    LastLookTimeout(String),
+    /// Acceptance flow timed out.
+    AcceptanceTimeout(String),
+
+    // Off-book execution errors
+    /// Collateral lock failed.
+    CollateralLockFailed(String),
+    /// Settlement failed.
+    SettlementFailed(String),
+    /// Position update failed.
+    PositionUpdateFailed(String),
+    /// Price bounds verification failed (CRE check).
+    PriceBoundsVerificationFailed(String),
+
+    // Package quote errors
+    /// Invalid package quote.
+    InvalidPackageQuote(String),
+    /// Inconsistent leg prices in package quote.
+    InconsistentLegPrices {
+        /// Index of the problematic leg.
+        leg_index: usize,
+        /// Reason for inconsistency.
+        reason: String,
+    },
+
+    // Multi-leg execution errors
+    /// Multi-leg execution failed.
+    MultiLegExecutionFailed {
+        /// Index of the leg that failed.
+        failed_leg_index: usize,
+        /// Instrument of the failed leg.
+        failed_leg_instrument: String,
+        /// Reason for failure.
+        reason: String,
+        /// Number of legs that were rolled back.
+        rolled_back_count: usize,
+    },
+    /// Rollback failed during multi-leg execution recovery.
+    RollbackFailed {
+        /// Original failure that triggered the rollback.
+        original_failure: String,
+        /// Failure during rollback.
+        rollback_failure: String,
+        /// Number of legs that were successfully rolled back.
+        partially_rolled_back: usize,
+    },
+    /// Leg execution timed out.
+    LegExecutionTimeout {
+        /// Index of the leg that timed out.
+        leg_index: usize,
+        /// Instrument of the timed out leg.
+        instrument: String,
+        /// Timeout in milliseconds.
+        timeout_ms: u64,
+    },
+
+    // Capacity management errors
+    /// Market maker capacity exceeded.
+    CapacityExceeded {
+        /// Market maker identifier.
+        mm_id: String,
+        /// Reason for capacity limit.
+        reason: String,
+    },
+    /// Capacity reservation not found.
+    ReservationNotFound {
+        /// Market maker identifier.
+        mm_id: String,
+        /// RFQ identifier.
+        rfq_id: String,
+    },
+    /// Capacity repository error.
+    CapacityRepositoryError {
+        /// Error message.
+        message: String,
+    },
+    /// Capacity counter overflow.
+    CapacityOverflow {
+        /// Description of what overflowed.
+        field: String,
+    },
+    /// Capacity counter underflow.
+    CapacityUnderflow {
+        /// Description of what underflowed.
+        field: String,
+    },
+
+    // Fee calculation errors
+    /// Fee calculation failed.
+    FeeCalculationFailed {
+        /// Reason for failure.
+        reason: String,
+    },
+
+    // Notification errors
+    /// Confirmation delivery failed.
+    ConfirmationFailed {
+        /// Channel that failed.
+        channel: String,
+        /// Reason for failure.
+        reason: String,
+    },
+    /// Invalid notification preferences.
+    InvalidNotificationPreferences {
+        /// Reason for invalidity.
+        reason: String,
+    },
+
+    // Schema errors
+    /// Schema not found.
+    SchemaNotFound {
+        /// Event type.
+        event_type: String,
+        /// Schema version.
+        version: String,
+    },
+    /// Schema already registered.
+    SchemaAlreadyRegistered {
+        /// Event type.
+        event_type: String,
+        /// Schema version.
+        version: String,
+    },
+    /// Schema generation failed.
+    SchemaGenerationFailed {
+        /// Reason for failure.
+        reason: String,
+    },
+}
+
+impl fmt::Display for DomainError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidQuantity(msg) => write!(f, "invalid quantity: {}", msg),
+            Self::InvalidPrice(msg) => write!(f, "invalid price: {}", msg),
+            Self::ValidationError(msg) => write!(f, "validation error: {}", msg),
+            Self::QuoteExpired(msg) => write!(f, "quote expired: {}", msg),
+            Self::QuoteNotFound(msg) => write!(f, "quote not found: {}", msg),
+            Self::InsufficientLiquidity {
+                requested,
+                available,
+            } => {
+                write!(
+                    f,
+                    "insufficient liquidity: requested {}, available {}",
+                    requested, available
+                )
             }
-        }
-
-        #[test]
-        fn state_errors_in_range() {
-            let errors = [
-                DomainError::InvalidStateTransition {
-                    from: RfqState::Created,
-                    to: RfqState::Executed,
-                },
-                DomainError::QuoteExpired("test".to_string()),
-                DomainError::QuoteNotFound("test".to_string()),
-                DomainError::RfqNotFound("test".to_string()),
-                DomainError::TradeNotFound("test".to_string()),
-                DomainError::AlreadyExists("test".to_string()),
-                DomainError::NegotiationNotFound("test".to_string()),
-                DomainError::MaxNegotiationRoundsReached { max_rounds: 3 },
-                DomainError::NoPriceImprovement {
-                    previous: Price::new(100.0).unwrap(),
-                    proposed: Price::new(101.0).unwrap(),
-                },
-                DomainError::NegotiationExpired("test".to_string()),
-                DomainError::InvalidNegotiationStateTransition {
-                    from: NegotiationState::Open,
-                    to: NegotiationState::Open,
-                },
-                DomainError::InsufficientLiquidity {
-                    available: Quantity::new(1.0).unwrap(),
-                    requested: Quantity::new(10.0).unwrap(),
-                },
-                DomainError::MinQuantityNotMet {
-                    filled: Quantity::new(0.5).unwrap(),
-                    minimum: Quantity::new(1.0).unwrap(),
-                },
-                DomainError::AllocationMismatch {
-                    allocated: Quantity::new(9.0).unwrap(),
-                    target: Quantity::new(10.0).unwrap(),
-                },
-                DomainError::OperationNotAllowed("test".to_string()),
-            ];
-
-            for error in errors {
-                let code = error.code();
-                assert!(
-                    (2000..3000).contains(&code),
-                    "Expected state error code 2000-2999, got {}",
-                    code
-                );
-                assert!(error.is_state_error());
-                assert_eq!(error.category(), "state");
+            Self::MinQuantityNotMet { filled, minimum } => {
+                write!(
+                    f,
+                    "minimum quantity not met: filled {}, minimum {}",
+                    filled, minimum
+                )
             }
-        }
-
-        #[test]
-        fn compliance_errors_in_range() {
-            let errors = [
-                DomainError::ComplianceBlocked("test".to_string()),
-                DomainError::KycFailed("test".to_string()),
-                DomainError::CounterpartyNotAuthorized("test".to_string()),
-                DomainError::TradingLimitExceeded("test".to_string()),
-                DomainError::InstrumentNotAllowed("test".to_string()),
-            ];
-
-            for error in errors {
-                let code = error.code();
-                assert!(
-                    (3000..4000).contains(&code),
-                    "Expected compliance error code 3000-3999, got {}",
-                    code
-                );
-                assert!(error.is_compliance_error());
-                assert_eq!(error.category(), "compliance");
+            Self::AllocationMismatch { allocated, target } => {
+                write!(
+                    f,
+                    "allocation mismatch: allocated {}, target {}",
+                    allocated, target
+                )
             }
-        }
-
-        #[test]
-        fn arithmetic_errors_in_range() {
-            let errors = [
-                DomainError::Overflow,
-                DomainError::Underflow,
-                DomainError::DivisionByZero,
-                DomainError::InvalidArithmeticValue("test".to_string()),
-            ];
-
-            for error in errors {
-                let code = error.code();
-                assert!(
-                    (4000..5000).contains(&code),
-                    "Expected arithmetic error code 4000-4999, got {}",
-                    code
-                );
-                assert!(error.is_arithmetic_error());
-                assert_eq!(error.category(), "arithmetic");
+            Self::NoReferencePrice => write!(f, "no reference price available"),
+            Self::DivisionByZero => write!(f, "division by zero"),
+            Self::PriceOutOfBounds {
+                proposed,
+                reference,
+                deviation_pct,
+                max_tolerance_pct,
+            } => {
+                write!(
+                    f,
+                    "price out of bounds: proposed {}, reference {}, deviation {}%, max tolerance {}%",
+                    proposed, reference, deviation_pct, max_tolerance_pct
+                )
+            }
+            Self::InvalidStateTransition { from, to } => {
+                write!(f, "invalid state transition from {} to {}", from, to)
+            }
+            Self::GenericStateTransitionError { from, to } => {
+                write!(f, "invalid state transition from {} to {}", from, to)
+            }
+            Self::InvalidState(msg) => write!(f, "invalid state: {}", msg),
+            Self::OperationNotAllowed(msg) => write!(f, "operation not allowed: {}", msg),
+            Self::InvalidTradeStateForExecution { expected, actual } => {
+                write!(
+                    f,
+                    "invalid trade state for execution: expected {}, got {}",
+                    expected, actual
+                )
+            }
+            Self::QuoteLocked(msg) => write!(f, "quote locked: {}", msg),
+            Self::LockAcquisitionFailed(msg) => write!(f, "lock acquisition failed: {}", msg),
+            Self::ConflictDetected(msg) => write!(f, "conflict detected: {}", msg),
+            Self::RiskCheckFailed(msg) => write!(f, "risk check failed: {}", msg),
+            Self::UnauthorizedCounterparty(msg) => write!(f, "unauthorized counterparty: {}", msg),
+            Self::ValidationFailed(msg) => write!(f, "validation failed: {}", msg),
+            Self::InvalidNegotiationStateTransition { from, to } => {
+                write!(
+                    f,
+                    "invalid negotiation state transition from {} to {}",
+                    from, to
+                )
+            }
+            Self::MaxNegotiationRoundsReached { max_rounds } => {
+                write!(f, "maximum negotiation rounds ({}) reached", max_rounds)
+            }
+            Self::NoPriceImprovement { previous, proposed } => {
+                write!(
+                    f,
+                    "no price improvement: previous {}, proposed {}",
+                    previous, proposed
+                )
+            }
+            Self::LastLookRejected(msg) => write!(f, "last-look rejected: {}", msg),
+            Self::LastLookTimeout(msg) => write!(f, "last-look timeout: {}", msg),
+            Self::AcceptanceTimeout(msg) => write!(f, "acceptance timeout: {}", msg),
+            Self::CollateralLockFailed(msg) => write!(f, "collateral lock failed: {}", msg),
+            Self::SettlementFailed(msg) => write!(f, "settlement failed: {}", msg),
+            Self::PositionUpdateFailed(msg) => write!(f, "position update failed: {}", msg),
+            Self::PriceBoundsVerificationFailed(msg) => {
+                write!(f, "price bounds verification failed: {}", msg)
+            }
+            Self::InvalidPackageQuote(msg) => write!(f, "invalid package quote: {}", msg),
+            Self::InconsistentLegPrices { leg_index, reason } => {
+                write!(
+                    f,
+                    "inconsistent leg prices at index {}: {}",
+                    leg_index, reason
+                )
+            }
+            Self::MultiLegExecutionFailed {
+                failed_leg_index,
+                failed_leg_instrument,
+                reason,
+                rolled_back_count,
+            } => {
+                write!(
+                    f,
+                    "multi-leg execution failed at leg {} ({}): {}, rolled back {} legs",
+                    failed_leg_index, failed_leg_instrument, reason, rolled_back_count
+                )
+            }
+            Self::RollbackFailed {
+                original_failure,
+                rollback_failure,
+                partially_rolled_back,
+            } => {
+                write!(
+                    f,
+                    "rollback failed: original error '{}', rollback error '{}', {} legs partially rolled back",
+                    original_failure, rollback_failure, partially_rolled_back
+                )
+            }
+            Self::LegExecutionTimeout {
+                leg_index,
+                instrument,
+                timeout_ms,
+            } => {
+                write!(
+                    f,
+                    "leg {} ({}) execution timed out after {}ms",
+                    leg_index, instrument, timeout_ms
+                )
+            }
+            Self::CapacityExceeded { mm_id, reason } => {
+                write!(f, "capacity exceeded for MM {}: {}", mm_id, reason)
+            }
+            Self::ReservationNotFound { mm_id, rfq_id } => {
+                write!(
+                    f,
+                    "reservation not found for MM {} and RFQ {}",
+                    mm_id, rfq_id
+                )
+            }
+            Self::CapacityRepositoryError { message } => {
+                write!(f, "capacity repository error: {}", message)
+            }
+            Self::CapacityOverflow { field } => {
+                write!(f, "capacity counter overflow: {}", field)
+            }
+            Self::CapacityUnderflow { field } => {
+                write!(f, "capacity counter underflow: {}", field)
+            }
+            Self::FeeCalculationFailed { reason } => {
+                write!(f, "fee calculation failed: {}", reason)
+            }
+            Self::ConfirmationFailed { channel, reason } => {
+                write!(f, "confirmation failed on channel {}: {}", channel, reason)
+            }
+            Self::InvalidNotificationPreferences { reason } => {
+                write!(f, "invalid notification preferences: {}", reason)
+            }
+            Self::SchemaNotFound {
+                event_type,
+                version,
+            } => {
+                write!(f, "schema not found: {} v{}", event_type, version)
+            }
+            Self::SchemaAlreadyRegistered {
+                event_type,
+                version,
+            } => {
+                write!(f, "schema already registered: {} v{}", event_type, version)
+            }
+            Self::SchemaGenerationFailed { reason } => {
+                write!(f, "schema generation failed: {}", reason)
             }
         }
     }
+}
 
-    mod display {
-        use super::*;
+impl std::error::Error for DomainError {}
 
-        #[test]
-        fn validation_error_display() {
-            let error = DomainError::InvalidPrice("must be positive".to_string());
-            assert_eq!(error.to_string(), "invalid price: must be positive");
-        }
-
-        #[test]
-        fn state_transition_error_display() {
-            let error = DomainError::InvalidStateTransition {
-                from: RfqState::Created,
-                to: RfqState::Executed,
-            };
-            assert_eq!(
-                error.to_string(),
-                "invalid state transition from CREATED to EXECUTED"
-            );
-        }
-
-        #[test]
-        fn compliance_error_display() {
-            let error = DomainError::ComplianceBlocked("sanctioned entity".to_string());
-            assert_eq!(error.to_string(), "compliance blocked: sanctioned entity");
-        }
-
-        #[test]
-        fn arithmetic_error_display() {
-            assert_eq!(DomainError::Overflow.to_string(), "arithmetic overflow");
-            assert_eq!(DomainError::Underflow.to_string(), "arithmetic underflow");
-            assert_eq!(DomainError::DivisionByZero.to_string(), "division by zero");
-        }
-    }
-
-    mod from_arithmetic_error {
-        use super::*;
-
-        #[test]
-        fn overflow_converts() {
-            let domain_err: DomainError = ArithmeticError::Overflow.into();
-            assert_eq!(domain_err, DomainError::Overflow);
-        }
-
-        #[test]
-        fn underflow_converts() {
-            let domain_err: DomainError = ArithmeticError::Underflow.into();
-            assert_eq!(domain_err, DomainError::Underflow);
-        }
-
-        #[test]
-        fn division_by_zero_converts() {
-            let domain_err: DomainError = ArithmeticError::DivisionByZero.into();
-            assert_eq!(domain_err, DomainError::DivisionByZero);
-        }
-
-        #[test]
-        fn invalid_value_converts() {
-            let domain_err: DomainError = ArithmeticError::InvalidValue("negative").into();
-            assert_eq!(
-                domain_err,
-                DomainError::InvalidArithmeticValue("negative".to_string())
-            );
-        }
-    }
-
-    mod specific_codes {
-        use super::*;
-
-        #[test]
-        fn specific_error_codes() {
-            assert_eq!(DomainError::InvalidPrice("".to_string()).code(), 1001);
-            assert_eq!(DomainError::InvalidQuantity("".to_string()).code(), 1002);
-            assert_eq!(DomainError::InvalidState("".to_string()).code(), 1003);
-            assert_eq!(
-                DomainError::InvalidStateTransition {
-                    from: RfqState::Created,
-                    to: RfqState::Executed
-                }
-                .code(),
-                2001
-            );
-            assert_eq!(DomainError::QuoteExpired("".to_string()).code(), 2002);
-            assert_eq!(
-                DomainError::NegotiationNotFound("".to_string()).code(),
-                2007
-            );
-            assert_eq!(
-                DomainError::MaxNegotiationRoundsReached { max_rounds: 3 }.code(),
-                2008
-            );
-            assert_eq!(
-                DomainError::NoPriceImprovement {
-                    previous: Price::new(100.0).unwrap(),
-                    proposed: Price::new(101.0).unwrap(),
-                }
-                .code(),
-                2009
-            );
-            assert_eq!(DomainError::NegotiationExpired("".to_string()).code(), 2010);
-            assert_eq!(
-                DomainError::InvalidNegotiationStateTransition {
-                    from: NegotiationState::Open,
-                    to: NegotiationState::Accepted,
-                }
-                .code(),
-                2011
-            );
-            assert_eq!(DomainError::NoReferencePrice.code(), 1007);
-            assert_eq!(
-                DomainError::PriceOutOfBounds {
-                    proposed: Price::new(105.0).unwrap(),
-                    reference: Price::new(100.0).unwrap(),
-                    deviation_pct: Decimal::new(5, 2),
-                    max_tolerance_pct: Decimal::new(5, 2),
-                }
-                .code(),
-                1008
-            );
-            assert_eq!(
-                DomainError::InsufficientLiquidity {
-                    available: Quantity::new(1.0).unwrap(),
-                    requested: Quantity::new(10.0).unwrap(),
-                }
-                .code(),
-                2012
-            );
-            assert_eq!(
-                DomainError::MinQuantityNotMet {
-                    filled: Quantity::new(0.5).unwrap(),
-                    minimum: Quantity::new(1.0).unwrap(),
-                }
-                .code(),
-                2013
-            );
-            assert_eq!(
-                DomainError::AllocationMismatch {
-                    allocated: Quantity::new(9.0).unwrap(),
-                    target: Quantity::new(10.0).unwrap(),
-                }
-                .code(),
-                2014
-            );
-            assert_eq!(DomainError::ComplianceBlocked("".to_string()).code(), 3001);
-            assert_eq!(DomainError::KycFailed("".to_string()).code(), 3002);
-            assert_eq!(DomainError::Overflow.code(), 4001);
-            assert_eq!(DomainError::Underflow.code(), 4002);
-            assert_eq!(DomainError::DivisionByZero.code(), 4003);
-        }
+impl From<crate::domain::value_objects::ArithmeticError> for DomainError {
+    fn from(err: crate::domain::value_objects::ArithmeticError) -> Self {
+        Self::ValidationError(err.to_string())
     }
 }

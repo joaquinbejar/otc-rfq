@@ -20,8 +20,17 @@
 //!
 //! ## Generated Code
 //!
-//! The `generated` module contains IronSBE-generated encoders and decoders
-//! from the XML schema. These provide zero-copy access to SBE messages.
+//! The `generated` module contains IronSBE-generated encoders and decoders from
+//! `schemas/sbe/otc-rfq.xml`, providing zero-copy access to all 18 SBE message types.
+//!
+//! Generated with IronSBE v0.2.1 which fixes repeating group namespacing
+//! (issue <https://github.com/joaquinbejar/IronSBE/issues/5>).
+//!
+//! Generated types:
+//! - 18 message encoders/decoders (IDs 1-4, 10-11, 20-27, 30-33, 40, 50)
+//! - 5 enums: RfqState, OrderSide, VenueType, SettlementMethod, AssetClass
+//! - Composite types: Uuid, Decimal, Timestamp
+//! - Repeating group support for quotes arrays
 
 pub mod codecs;
 pub mod error;
@@ -30,15 +39,13 @@ mod proptest_roundtrip;
 pub mod traits;
 pub mod types;
 
-// NOTE: IronSBE codegen is available but currently generates code with issues
-// (empty enums). The generated module is disabled until IronSBE codegen is fixed.
-// For now, we use ironsbe-core types directly in our custom implementation.
-//
-// To enable generated code in the future, uncomment:
-// #[allow(unsafe_code, clippy::transmute_int_to_bool)]
-// pub mod generated {
-//     include!(concat!(env!("OUT_DIR"), "/sbe_generated.rs"));
-// }
+// Generated SBE types from schemas/sbe/otc-rfq.xml
+// IronSBE v0.2.1 fixes repeating group namespacing (issue #5)
+#[allow(unsafe_code, clippy::transmute_int_to_bool, clippy::all)]
+#[allow(dead_code, unused_imports, non_camel_case_types, missing_docs)]
+pub mod generated {
+    include!(concat!(env!("OUT_DIR"), "/sbe_generated.rs"));
+}
 
 pub use codecs::{
     MESSAGE_HEADER_SIZE, QUOTE_RECEIVED_TEMPLATE_ID, QuoteReceivedCodec, RFQ_CREATED_TEMPLATE_ID,

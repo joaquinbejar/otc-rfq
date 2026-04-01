@@ -27,6 +27,8 @@ use crate::domain::entities::mm_performance::MmPerformanceMetrics;
 use crate::domain::entities::rfq::Rfq;
 use crate::domain::entities::trade::Trade;
 use crate::domain::entities::venue::{Venue, VenueHealth};
+use crate::domain::services::fee_engine::{FeeEngine, FeeSchedule};
+use crate::domain::services::mm_incentive_service::{MmIncentiveError, MmIncentiveService};
 use crate::domain::services::mm_performance::MmPerformanceTracker;
 use crate::domain::value_objects::timestamp::Timestamp;
 use crate::domain::value_objects::{
@@ -56,6 +58,10 @@ pub struct AppState {
     pub trade_repository: Arc<dyn TradeRepository>,
     /// MM performance tracker (optional — `None` disables MM performance endpoints).
     pub mm_performance_tracker: Option<Arc<MmPerformanceTracker>>,
+    /// MM incentive service (optional — `None` disables MM incentive endpoints).
+    pub mm_incentive_service: Option<Arc<MmIncentiveService>>,
+    /// Fee engine (optional — `None` disables fee schedule endpoints).
+    pub fee_engine: Option<Arc<FeeEngine>>,
 }
 
 /// Repository for venue persistence.
@@ -850,6 +856,120 @@ pub async fn get_mm_performance(
 }
 
 // ============================================================================
+// MM Incentive Status DTOs
+// ============================================================================
+
+/// Penalty status summary for API response.
+#[derive(Debug, Clone, Serialize)]
+pub struct PenaltyStatusResponse {
+    /// Whether any penalty applies.
+    pub has_penalty: bool,
+    /// Whether capacity should be reduced.
+    pub capacity_reduced: bool,
+    /// Whether tier should be downgraded.
+    pub tier_downgraded: bool,
+    /// Reason for penalty, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// MM incentive status response DTO.
+///
+/// Returns the complete incentive status for a market maker including
+/// tier, rebates, volume metrics, and penalty status.
+#[derive(Debug, Clone, Serialize)]
+pub struct MmIncentiveStatusResponse {
+    /// Market maker identifier.
+    pub mm_id: String,
+    /// Current incentive tier (BRONZE, SILVER, GOLD, PLATINUM).
+    pub current_tier: String,
+    /// Rebate rate for current tier (basis points, negative = rebate to MM).
+    pub rebate_rate_bps: String,
+    /// Monthly trading volume in USD.
+    pub monthly_volume_usd: String,
+    /// Volume needed to reach next tier (null if Platinum).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub volume_to_next_tier_usd: Option<String>,
+    /// Next tier name (null if Platinum).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_tier: Option<String>,
+    /// Rebates earned in current period (USD).
+    pub current_period_rebates_usd: String,
+    /// Penalty status.
+    pub penalty_status: PenaltyStatusResponse,
+    /// Timestamp when this status was computed (ISO 8601).
+    pub computed_at: String,
+}
+
+impl MmIncentiveStatusResponse {
+    /// Creates a response from domain `MmIncentiveStatus`.
+    #[must_use]
+    pub fn from_status(status: &crate::domain::entities::mm_incentive::MmIncentiveStatus) -> Self {
+        Self {
+            mm_id: status.mm_id().to_string(),
+            current_tier: status.current_tier().to_string(),
+            rebate_rate_bps: status.rebate_rate_bps().to_string(),
+            monthly_volume_usd: status.monthly_volume_usd().to_string(),
+            volume_to_next_tier_usd: status.volume_to_next_tier_usd().map(|v| v.to_string()),
+            next_tier: status.next_tier().map(|t| t.to_string()),
+            current_period_rebates_usd: status.current_period_rebates_usd().to_string(),
+            penalty_status: PenaltyStatusResponse {
+                has_penalty: status.penalty_result().has_penalty(),
+                capacity_reduced: status.penalty_result().should_reduce_capacity(),
+                tier_downgraded: status.penalty_result().should_downgrade_tier(),
+                reason: status.penalty_result().reason().map(String::from),
+            },
+            computed_at: status.computed_at().to_iso8601(),
+        }
+    }
+}
+
+// ============================================================================
+// MM Incentive Status Handlers
+// ============================================================================
+
+/// Get incentive status for a specific market maker.
+///
+/// Returns the MM's current tier, rebate rate, volume metrics, and penalty status.
+///
+/// # Errors
+///
+/// Returns `NOT_FOUND` if the MM has no recorded data.
+/// Returns `NOT_IMPLEMENTED` if the incentive service is not configured.
+/// Returns `INTERNAL_ERROR` if status computation fails.
+#[instrument(skip(state))]
+pub async fn get_mm_incentive_status(
+    State(state): State<Arc<AppState>>,
+    Path(mm_id): Path<String>,
+) -> Result<Json<MmIncentiveStatusResponse>, (StatusCode, Json<ErrorResponse>)> {
+    info!("Getting MM incentive status for: {}", mm_id);
+
+    if mm_id.is_empty() {
+        return Err(validation_error("mm_id cannot be empty"));
+    }
+
+    let service = state
+        .mm_incentive_service
+        .as_ref()
+        .ok_or_else(|| not_implemented("mm incentive service not configured"))?;
+
+    let counterparty_id = CounterpartyId::new(&mm_id);
+
+    let status = service
+        .get_status(&counterparty_id)
+        .await
+        .map_err(|e| match &e {
+            MmIncentiveError::MmNotFound(_) => not_found("market maker", &mm_id),
+            MmIncentiveError::Performance(pe) => {
+                error!("Failed to get MM incentive status for {}: {}", mm_id, pe);
+                internal_error(&pe.to_string())
+            }
+        })?;
+
+    Ok(Json(MmIncentiveStatusResponse::from_status(&status)))
+}
+
+// ============================================================================
 // Health Check
 // ============================================================================
 
@@ -907,6 +1027,7 @@ fn validate_create_rfq_request(
     Ok(())
 }
 
+#[allow(clippy::unused_async)]
 async fn fetch_all_rfqs(
     _repo: &Arc<dyn RfqRepository>,
 ) -> Result<Vec<Rfq>, (StatusCode, Json<ErrorResponse>)> {
@@ -951,6 +1072,74 @@ fn internal_error(message: &str) -> (StatusCode, Json<ErrorResponse>) {
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(ErrorResponse::new("INTERNAL_ERROR", message)),
     )
+}
+
+// ============================================================================
+// Fee Schedule Handlers
+// ============================================================================
+
+/// GET /api/v1/fees/schedule
+///
+/// Returns the base fee schedule.
+///
+/// # Response
+///
+/// ```json
+/// {
+///   "rfq_rates": {
+///     "taker_rate_bps": 3,
+///     "maker_rate_bps": -1
+///   },
+///   "block_rates": {
+///     "taker_rate_bps": 2,
+///     "maker_rate_bps": 2
+///   },
+///   "volume_discounts": [
+///     {"threshold_usd": 1000000, "discount_pct": 10},
+///     {"threshold_usd": 10000000, "discount_pct": 25},
+///     {"threshold_usd": 100000000, "discount_pct": 50}
+///   ]
+/// }
+/// ```
+///
+/// # Errors
+///
+/// Returns 501 Not Implemented if fee engine is not configured.
+#[instrument(skip(state))]
+pub async fn get_fee_schedule(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<FeeSchedule>, (StatusCode, Json<ErrorResponse>)> {
+    let fee_engine = state
+        .fee_engine
+        .as_ref()
+        .ok_or_else(|| not_implemented("fee engine not configured"))?;
+
+    Ok(Json(fee_engine.schedule().clone()))
+}
+
+/// GET /api/v1/fees/schedule/{counterparty_id}
+///
+/// Returns fee schedule for a specific counterparty.
+///
+/// Currently returns the base schedule. Counterparty-specific overrides
+/// will be implemented in a follow-up issue.
+///
+/// # Errors
+///
+/// Returns 501 Not Implemented if fee engine is not configured.
+#[instrument(skip(state))]
+pub async fn get_counterparty_fee_schedule(
+    State(state): State<Arc<AppState>>,
+    Path(_counterparty_id): Path<String>,
+) -> Result<Json<FeeSchedule>, (StatusCode, Json<ErrorResponse>)> {
+    let fee_engine = state
+        .fee_engine
+        .as_ref()
+        .ok_or_else(|| not_implemented("fee engine not configured"))?;
+
+    // TODO: Implement override lookup when FeeOverrideProvider is integrated
+    // For now, return base schedule
+    Ok(Json(fee_engine.schedule().clone()))
 }
 
 #[cfg(test)]

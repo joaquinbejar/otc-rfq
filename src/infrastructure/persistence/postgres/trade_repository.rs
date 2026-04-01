@@ -51,14 +51,18 @@ impl TradeRepository for PostgresTradeRepository {
         let version = trade.version() as i64;
         let created_at = trade.created_at().timestamp_millis();
         let updated_at = trade.updated_at().timestamp_millis();
+        let taker_fee = trade.taker_fee();
+        let maker_fee = trade.maker_fee();
+        let net_fee = trade.net_fee();
 
         let result = sqlx::query(
             r#"
             INSERT INTO trades (
                 id, rfq_id, quote_id, venue_id, price, quantity,
                 venue_execution_ref, settlement_state, settlement_tx_ref,
-                failure_reason, version, created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                failure_reason, version, created_at, updated_at,
+                taker_fee, maker_fee, net_fee
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
             ON CONFLICT (id) DO UPDATE SET
                 rfq_id = EXCLUDED.rfq_id,
                 quote_id = EXCLUDED.quote_id,
@@ -70,7 +74,10 @@ impl TradeRepository for PostgresTradeRepository {
                 settlement_tx_ref = EXCLUDED.settlement_tx_ref,
                 failure_reason = EXCLUDED.failure_reason,
                 version = EXCLUDED.version,
-                updated_at = EXCLUDED.updated_at
+                updated_at = EXCLUDED.updated_at,
+                taker_fee = EXCLUDED.taker_fee,
+                maker_fee = EXCLUDED.maker_fee,
+                net_fee = EXCLUDED.net_fee
             WHERE trades.version < EXCLUDED.version
             "#,
         )
@@ -87,6 +94,9 @@ impl TradeRepository for PostgresTradeRepository {
         .bind(version)
         .bind(created_at)
         .bind(updated_at)
+        .bind(taker_fee)
+        .bind(maker_fee)
+        .bind(net_fee)
         .execute(&self.pool)
         .await
         .map_err(|e| RepositoryError::query(e.to_string()))?;
@@ -113,14 +123,15 @@ impl TradeRepository for PostgresTradeRepository {
         Ok(())
     }
 
-    async fn get(&self, id: &TradeId) -> RepositoryResult<Option<Trade>> {
+    async fn get(&self, id: TradeId) -> RepositoryResult<Option<Trade>> {
         let id_str = id.to_string();
 
         let row: Option<TradeRow> = sqlx::query_as(
             r#"
             SELECT id, rfq_id, quote_id, venue_id, price, quantity,
                    venue_execution_ref, settlement_state, settlement_tx_ref,
-                   failure_reason, version, created_at, updated_at
+                   failure_reason, version, created_at, updated_at,
+                   taker_fee, maker_fee, net_fee
             FROM trades WHERE id = $1
             "#,
         )
@@ -132,14 +143,15 @@ impl TradeRepository for PostgresTradeRepository {
         row.map(|r| r.try_into_trade()).transpose()
     }
 
-    async fn get_by_rfq(&self, rfq_id: &RfqId) -> RepositoryResult<Option<Trade>> {
+    async fn get_by_rfq(&self, rfq_id: RfqId) -> RepositoryResult<Option<Trade>> {
         let rfq_id_str = rfq_id.to_string();
 
         let row: Option<TradeRow> = sqlx::query_as(
             r#"
             SELECT id, rfq_id, quote_id, venue_id, price, quantity,
                    venue_execution_ref, settlement_state, settlement_tx_ref,
-                   failure_reason, version, created_at, updated_at
+                   failure_reason, version, created_at, updated_at,
+                   taker_fee, maker_fee, net_fee
             FROM trades WHERE rfq_id = $1
             "#,
         )
@@ -158,7 +170,8 @@ impl TradeRepository for PostgresTradeRepository {
             r#"
             SELECT id, rfq_id, quote_id, venue_id, price, quantity,
                    venue_execution_ref, settlement_state, settlement_tx_ref,
-                   failure_reason, version, created_at, updated_at
+                   failure_reason, version, created_at, updated_at,
+                   taker_fee, maker_fee, net_fee
             FROM trades WHERE settlement_state = $1
             "#,
         )
@@ -167,7 +180,10 @@ impl TradeRepository for PostgresTradeRepository {
         .await
         .map_err(|e| RepositoryError::query(e.to_string()))?;
 
-        rows.into_iter().map(|r| r.try_into_trade()).collect()
+        Ok(rows
+            .into_iter()
+            .map(|r| r.try_into_trade())
+            .collect::<RepositoryResult<Vec<_>>>()?)
     }
 
     async fn find_by_venue(&self, venue_id: &VenueId) -> RepositoryResult<Vec<Trade>> {
@@ -177,7 +193,8 @@ impl TradeRepository for PostgresTradeRepository {
             r#"
             SELECT id, rfq_id, quote_id, venue_id, price, quantity,
                    venue_execution_ref, settlement_state, settlement_tx_ref,
-                   failure_reason, version, created_at, updated_at
+                   failure_reason, version, created_at, updated_at,
+                   taker_fee, maker_fee, net_fee
             FROM trades WHERE venue_id = $1
             "#,
         )
@@ -186,7 +203,10 @@ impl TradeRepository for PostgresTradeRepository {
         .await
         .map_err(|e| RepositoryError::query(e.to_string()))?;
 
-        rows.into_iter().map(|r| r.try_into_trade()).collect()
+        Ok(rows
+            .into_iter()
+            .map(|r| r.try_into_trade())
+            .collect::<RepositoryResult<Vec<_>>>()?)
     }
 
     async fn find_settled(&self) -> RepositoryResult<Vec<Trade>> {
@@ -196,7 +216,8 @@ impl TradeRepository for PostgresTradeRepository {
             r#"
             SELECT id, rfq_id, quote_id, venue_id, price, quantity,
                    venue_execution_ref, settlement_state, settlement_tx_ref,
-                   failure_reason, version, created_at, updated_at
+                   failure_reason, version, created_at, updated_at,
+                   taker_fee, maker_fee, net_fee
             FROM trades WHERE settlement_state = $1
             "#,
         )
@@ -205,7 +226,10 @@ impl TradeRepository for PostgresTradeRepository {
         .await
         .map_err(|e| RepositoryError::query(e.to_string()))?;
 
-        rows.into_iter().map(|r| r.try_into_trade()).collect()
+        Ok(rows
+            .into_iter()
+            .map(|r| r.try_into_trade())
+            .collect::<RepositoryResult<Vec<_>>>()?)
     }
 
     async fn find_failed(&self) -> RepositoryResult<Vec<Trade>> {
@@ -215,7 +239,8 @@ impl TradeRepository for PostgresTradeRepository {
             r#"
             SELECT id, rfq_id, quote_id, venue_id, price, quantity,
                    venue_execution_ref, settlement_state, settlement_tx_ref,
-                   failure_reason, version, created_at, updated_at
+                   failure_reason, version, created_at, updated_at,
+                   taker_fee, maker_fee, net_fee
             FROM trades WHERE settlement_state = $1
             "#,
         )
@@ -227,7 +252,7 @@ impl TradeRepository for PostgresTradeRepository {
         rows.into_iter().map(|r| r.try_into_trade()).collect()
     }
 
-    async fn delete(&self, id: &TradeId) -> RepositoryResult<bool> {
+    async fn delete(&self, id: TradeId) -> RepositoryResult<bool> {
         let id_str = id.to_string();
 
         let result = sqlx::query("DELETE FROM trades WHERE id = $1")
@@ -278,6 +303,9 @@ struct TradeRow {
     version: i64,
     created_at: i64,
     updated_at: i64,
+    taker_fee: Option<rust_decimal::Decimal>,
+    maker_fee: Option<rust_decimal::Decimal>,
+    net_fee: Option<rust_decimal::Decimal>,
 }
 
 impl TradeRow {
@@ -325,6 +353,9 @@ impl TradeRow {
             self.version as u64,
             created_at,
             updated_at,
+            self.taker_fee,
+            self.maker_fee,
+            self.net_fee,
         ))
     }
 }

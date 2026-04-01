@@ -83,14 +83,14 @@ impl TradeRepository for InMemoryTradeRepository {
         Ok(())
     }
 
-    async fn get(&self, id: &TradeId) -> RepositoryResult<Option<Trade>> {
+    async fn get(&self, id: TradeId) -> RepositoryResult<Option<Trade>> {
         let storage = self.storage.read().await;
-        Ok(storage.get(id).cloned())
+        Ok(storage.get(&id).cloned())
     }
 
-    async fn get_by_rfq(&self, rfq_id: &RfqId) -> RepositoryResult<Option<Trade>> {
+    async fn get_by_rfq(&self, rfq_id: RfqId) -> RepositoryResult<Option<Trade>> {
         let storage = self.storage.read().await;
-        let trade = storage.values().find(|t| t.rfq_id() == *rfq_id).cloned();
+        let trade = storage.values().find(|t| t.rfq_id() == rfq_id).cloned();
         Ok(trade)
     }
 
@@ -134,9 +134,9 @@ impl TradeRepository for InMemoryTradeRepository {
         Ok(failed)
     }
 
-    async fn delete(&self, id: &TradeId) -> RepositoryResult<bool> {
+    async fn delete(&self, id: TradeId) -> RepositoryResult<bool> {
         let mut storage = self.storage.write().await;
-        Ok(storage.remove(id).is_some())
+        Ok(storage.remove(&id).is_some())
     }
 
     async fn count(&self) -> RepositoryResult<u64> {
@@ -181,7 +181,7 @@ mod tests {
 
         repo.save(&trade).await.unwrap();
 
-        let retrieved = repo.get(&id).await.unwrap();
+        let retrieved = repo.get(id).await.unwrap();
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().id(), id);
     }
@@ -191,7 +191,7 @@ mod tests {
         let repo = InMemoryTradeRepository::new();
         let id = TradeId::new_v4();
 
-        let result = repo.get(&id).await.unwrap();
+        let result = repo.get(id).await.unwrap();
         assert!(result.is_none());
     }
 
@@ -203,7 +203,7 @@ mod tests {
 
         repo.save(&trade).await.unwrap();
 
-        let retrieved = repo.get_by_rfq(&rfq_id).await.unwrap();
+        let retrieved = repo.get_by_rfq(rfq_id).await.unwrap();
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().rfq_id(), rfq_id);
     }
@@ -247,7 +247,7 @@ mod tests {
         repo.save(&trade).await.unwrap();
         assert_eq!(repo.count().await.unwrap(), 1);
 
-        let deleted = repo.delete(&id).await.unwrap();
+        let deleted = repo.delete(id).await.unwrap();
         assert!(deleted);
         assert_eq!(repo.count().await.unwrap(), 0);
     }

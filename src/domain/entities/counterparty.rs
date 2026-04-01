@@ -522,6 +522,8 @@ pub struct Counterparty {
     limits: CounterpartyLimits,
     /// Wallet addresses for on-chain settlement.
     wallet_addresses: Vec<WalletAddress>,
+    /// Notification preferences for trade confirmations.
+    notification_preferences: crate::domain::value_objects::NotificationPreferences,
     /// Whether the counterparty is active.
     active: bool,
     /// When this counterparty was created.
@@ -552,6 +554,7 @@ impl Counterparty {
             kyc_status: KycStatus::NotStarted,
             limits: CounterpartyLimits::default(),
             wallet_addresses: Vec::new(),
+            notification_preferences: crate::domain::value_objects::NotificationPreferences::none(),
             active: true,
             created_at: now,
             updated_at: now,
@@ -568,6 +571,7 @@ impl Counterparty {
         kyc_status: KycStatus,
         limits: CounterpartyLimits,
         wallet_addresses: Vec<WalletAddress>,
+        notification_preferences: crate::domain::value_objects::NotificationPreferences,
         active: bool,
         created_at: Timestamp,
         updated_at: Timestamp,
@@ -579,6 +583,7 @@ impl Counterparty {
             kyc_status,
             limits,
             wallet_addresses,
+            notification_preferences,
             active,
             created_at,
             updated_at,
@@ -634,6 +639,25 @@ impl Counterparty {
     #[must_use]
     pub fn wallet_addresses(&self) -> &[WalletAddress] {
         &self.wallet_addresses
+    }
+
+    /// Returns the notification preferences.
+    #[inline]
+    #[must_use]
+    pub fn notification_preferences(
+        &self,
+    ) -> &crate::domain::value_objects::NotificationPreferences {
+        &self.notification_preferences
+    }
+
+    /// Sets the notification preferences.
+    #[inline]
+    pub fn set_notification_preferences(
+        &mut self,
+        preferences: crate::domain::value_objects::NotificationPreferences,
+    ) {
+        self.notification_preferences = preferences;
+        self.updated_at = Timestamp::now();
     }
 
     /// Returns whether the counterparty is active.

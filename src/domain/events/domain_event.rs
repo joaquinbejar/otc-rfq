@@ -15,6 +15,7 @@
 //! // See rfq_events, trade_events, and compliance_events for concrete implementations
 //! ```
 
+use crate::domain::schema::SchemaVersion;
 use crate::domain::value_objects::timestamp::Timestamp;
 use crate::domain::value_objects::{EventId, RfqId};
 use serde::{Deserialize, Serialize};
@@ -36,6 +37,8 @@ pub enum EventType {
     Settlement,
     /// Compliance events.
     Compliance,
+    /// Capacity management events.
+    Capacity,
 }
 
 impl fmt::Display for EventType {
@@ -46,6 +49,7 @@ impl fmt::Display for EventType {
             Self::Trade => write!(f, "TRADE"),
             Self::Settlement => write!(f, "SETTLEMENT"),
             Self::Compliance => write!(f, "COMPLIANCE"),
+            Self::Capacity => write!(f, "CAPACITY"),
         }
     }
 }
@@ -92,6 +96,9 @@ pub struct EventMetadata {
     pub rfq_id: Option<RfqId>,
     /// When this event occurred.
     pub timestamp: Timestamp,
+    /// Schema version for this event.
+    #[serde(default)]
+    pub schema_version: SchemaVersion,
 }
 
 impl EventMetadata {
@@ -102,6 +109,7 @@ impl EventMetadata {
             event_id: EventId::new_v4(),
             rfq_id,
             timestamp: Timestamp::now(),
+            schema_version: SchemaVersion::V1_0_0,
         }
     }
 
@@ -118,6 +126,7 @@ impl EventMetadata {
             event_id,
             rfq_id,
             timestamp,
+            schema_version: SchemaVersion::V1_0_0,
         }
     }
 }

@@ -10,7 +10,7 @@
 //! - **Domain Layer** (`domain`): Core business logic, entities, value objects, and domain events
 //! - **Application Layer** (`application`): Use cases, services, and orchestration
 //! - **Infrastructure Layer** (`infrastructure`): External adapters, repositories, and integrations
-//! - **API Layer** (`api`): gRPC, REST, and WebSocket interfaces
+//! - **API Layer** (`api`): SBE, REST, and WebSocket interfaces
 //!
 //! ## Example
 //!

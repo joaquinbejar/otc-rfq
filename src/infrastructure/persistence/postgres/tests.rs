@@ -62,6 +62,7 @@ async fn setup_tables(pool: &PgPool) -> Result<(), sqlx::Error> {
             instrument JSONB NOT NULL,
             side VARCHAR(10) NOT NULL,
             quantity DECIMAL NOT NULL,
+            min_quantity DECIMAL,
             state VARCHAR(50) NOT NULL,
             expires_at BIGINT NOT NULL,
             quotes JSONB NOT NULL DEFAULT '[]',
@@ -203,10 +204,10 @@ async fn rfq_repository_save_and_get() {
     repo.save(&rfq).await.unwrap();
 
     // Get
-    let retrieved = repo.get(&rfq_id).await.unwrap();
-    assert!(retrieved.is_some());
+    let result = repo.get(rfq_id).await.unwrap();
+    assert!(result.is_some());
 
-    let retrieved = retrieved.unwrap();
+    let retrieved = result.unwrap();
     assert_eq!(retrieved.id(), rfq_id);
     assert_eq!(retrieved.client_id().as_str(), rfq.client_id().as_str());
     assert_eq!(retrieved.side(), rfq.side());
@@ -237,7 +238,7 @@ async fn rfq_repository_update() {
     repo.save(&rfq).await.unwrap();
 
     // Verify update
-    let retrieved = repo.get(&rfq_id).await.unwrap().unwrap();
+    let retrieved = repo.get(rfq_id).await.unwrap().unwrap();
     assert_eq!(retrieved.state(), rfq.state());
     assert_eq!(retrieved.version(), 2);
 
@@ -263,8 +264,8 @@ async fn rfq_repository_optimistic_locking() {
     repo.save(&rfq).await.unwrap();
 
     // Get two copies
-    let mut rfq1 = repo.get(&rfq_id).await.unwrap().unwrap();
-    let mut rfq2 = repo.get(&rfq_id).await.unwrap().unwrap();
+    let mut rfq1 = repo.get(rfq_id).await.unwrap().unwrap();
+    let mut rfq2 = repo.get(rfq_id).await.unwrap().unwrap();
 
     // Update first copy
     rfq1.start_quote_collection().unwrap();
@@ -324,8 +325,76 @@ async fn rfq_repository_get_nonexistent() {
     let repo = PostgresRfqRepository::new(pool.clone());
     let nonexistent_id = RfqId::new_v4();
 
-    let result = repo.get(&nonexistent_id).await.unwrap();
+    let result = repo.get(nonexistent_id).await.unwrap();
     assert!(result.is_none());
+
+    cleanup_tables(&pool).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires PostgreSQL database"]
+async fn rfq_repository_min_quantity_some_survives_round_trip() {
+    let pool = match create_test_pool().await {
+        Some(p) => p,
+        None => return,
+    };
+
+    setup_tables(&pool).await.unwrap();
+    cleanup_tables(&pool).await.unwrap();
+
+    let repo = PostgresRfqRepository::new(pool.clone());
+
+    let symbol = Symbol::new("BTC/USD").unwrap();
+    let instrument = Instrument::builder(symbol, AssetClass::CryptoSpot).build();
+
+    let rfq = RfqBuilder::new(
+        CounterpartyId::new("test-client"),
+        instrument,
+        OrderSide::Buy,
+        Quantity::new(10.0).unwrap(),
+        Timestamp::now().add_secs(3600),
+    )
+    .min_quantity(Quantity::new(5.0).unwrap())
+    .build();
+
+    let rfq_id = rfq.id();
+
+    // Save
+    repo.save(&rfq).await.unwrap();
+
+    // Reload
+    let retrieved = repo.get(rfq_id).await.unwrap().unwrap();
+
+    // Assert min_quantity survived
+    assert_eq!(retrieved.min_quantity(), Some(Quantity::new(5.0).unwrap()));
+
+    cleanup_tables(&pool).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires PostgreSQL database"]
+async fn rfq_repository_min_quantity_none_remains_none() {
+    let pool = match create_test_pool().await {
+        Some(p) => p,
+        None => return,
+    };
+
+    setup_tables(&pool).await.unwrap();
+    cleanup_tables(&pool).await.unwrap();
+
+    let repo = PostgresRfqRepository::new(pool.clone());
+
+    let rfq = create_test_rfq();
+    let rfq_id = rfq.id();
+
+    // Save (without min_quantity)
+    repo.save(&rfq).await.unwrap();
+
+    // Reload
+    let retrieved = repo.get(rfq_id).await.unwrap().unwrap();
+
+    // Assert min_quantity is None
+    assert_eq!(retrieved.min_quantity(), None);
 
     cleanup_tables(&pool).await.unwrap();
 }
@@ -356,10 +425,10 @@ async fn trade_repository_save_and_get() {
     repo.save(&trade).await.unwrap();
 
     // Get
-    let retrieved = repo.get(&trade_id).await.unwrap();
-    assert!(retrieved.is_some());
+    let result = repo.get(trade_id).await.unwrap();
+    assert!(result.is_some());
 
-    let retrieved = retrieved.unwrap();
+    let retrieved = result.unwrap();
     assert_eq!(retrieved.id(), trade_id);
     assert_eq!(retrieved.rfq_id(), rfq_id);
     assert_eq!(retrieved.quote_id(), quote_id);
@@ -393,7 +462,7 @@ async fn trade_repository_update_settlement_state() {
     repo.save(&trade).await.unwrap();
 
     // Verify
-    let retrieved = repo.get(&trade_id).await.unwrap().unwrap();
+    let retrieved = repo.get(trade_id).await.unwrap().unwrap();
     assert!(retrieved.is_in_progress());
 
     cleanup_tables(&pool).await.unwrap();
@@ -423,7 +492,7 @@ async fn trade_repository_find_by_rfq() {
     repo.save(&trade2).await.unwrap();
 
     // Find by RFQ (get_by_rfq returns Option<Trade>, not Vec)
-    let trade = repo.get_by_rfq(&rfq_id).await.unwrap();
+    let trade = repo.get_by_rfq(rfq_id).await.unwrap();
     // get_by_rfq returns the first trade for the RFQ
     assert!(trade.is_some());
 
@@ -452,8 +521,8 @@ async fn trade_repository_optimistic_locking() {
     repo.save(&trade).await.unwrap();
 
     // Get two copies
-    let mut trade1 = repo.get(&trade_id).await.unwrap().unwrap();
-    let mut trade2 = repo.get(&trade_id).await.unwrap().unwrap();
+    let mut trade1 = repo.get(trade_id).await.unwrap().unwrap();
+    let mut trade2 = repo.get(trade_id).await.unwrap().unwrap();
 
     // Update first
     trade1.start_settlement().unwrap();
@@ -492,7 +561,7 @@ async fn event_store_append_and_get() {
     store.append(event.clone()).await.unwrap();
 
     // Get events
-    let events = store.get_events(&rfq_id).await.unwrap();
+    let events = store.get_events(rfq_id).await.unwrap();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].event_id, event.event_id);
 
@@ -524,7 +593,7 @@ async fn event_store_ordering() {
     store.append(event2.clone()).await.unwrap();
 
     // Get events (should be ordered by sequence)
-    let events = store.get_events(&rfq_id).await.unwrap();
+    let events = store.get_events(rfq_id).await.unwrap();
     assert_eq!(events.len(), 3);
     assert_eq!(events[0].sequence, 1);
     assert_eq!(events[1].sequence, 2);
@@ -580,8 +649,8 @@ async fn event_store_multiple_rfqs() {
     store.append(create_test_event(rfq_id2, 1)).await.unwrap();
 
     // Get events for each RFQ
-    let events1 = store.get_events(&rfq_id1).await.unwrap();
-    let events2 = store.get_events(&rfq_id2).await.unwrap();
+    let events1 = store.get_events(rfq_id1).await.unwrap();
+    let events2 = store.get_events(rfq_id2).await.unwrap();
 
     assert_eq!(events1.len(), 2);
     assert_eq!(events2.len(), 1);
@@ -624,13 +693,13 @@ async fn cleanup_between_tests() {
     cleanup_tables(&pool).await.unwrap();
 
     // Verify cleanup
-    let rfqs = rfq_repo.get(&rfq_id).await.unwrap();
+    let rfqs = rfq_repo.get(rfq_id).await.unwrap();
     assert!(rfqs.is_none());
 
-    let trade = trade_repo.get_by_rfq(&rfq_id).await.unwrap();
+    let trade = trade_repo.get_by_rfq(rfq_id).await.unwrap();
     assert!(trade.is_none());
 
-    let events = event_store.get_events(&rfq_id).await.unwrap();
+    let events = event_store.get_events(rfq_id).await.unwrap();
     assert!(events.is_empty());
 }
 

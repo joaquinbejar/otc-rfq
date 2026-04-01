@@ -15,6 +15,7 @@ use super::traits::{SbeDecode, SbeEncode};
 use super::types::{SbeDecimal, SbeUuid, decode_var_string, encode_var_string};
 use crate::domain::events::rfq_events::{QuoteReceived, RfqCreated};
 use crate::domain::events::trade_events::TradeExecuted;
+use crate::domain::value_objects::enums::{Blockchain, SettlementMethod};
 use crate::domain::value_objects::timestamp::Timestamp;
 use crate::domain::value_objects::{
     CounterpartyId, EventId, OrderSide, Price, Quantity, QuoteId, RfqId, TradeId, VenueId,
@@ -27,7 +28,9 @@ pub const MESSAGE_HEADER_SIZE: usize = 8;
 pub const SCHEMA_ID: u16 = 1;
 
 /// Schema version.
-pub const SCHEMA_VERSION: u16 = 1;
+/// Version 2: added fee fields (taker_fee, maker_fee, net_fee) and settlement_method
+/// to the TradeExecuted message fixed block.
+pub const SCHEMA_VERSION: u16 = 2;
 
 /// Template ID for RfqCreated message.
 pub const RFQ_CREATED_TEMPLATE_ID: u16 = 1;
@@ -70,6 +73,7 @@ fn decode_header(buffer: &[u8]) -> SbeResult<(u16, u16, u16, u16)> {
 
 /// Encodes OrderSide to SBE enum value.
 #[inline]
+#[must_use]
 fn encode_order_side(side: OrderSide) -> u8 {
     match side {
         OrderSide::Buy => 0,
@@ -84,6 +88,87 @@ fn decode_order_side(value: u8) -> SbeResult<OrderSide> {
         0 => Ok(OrderSide::Buy),
         1 => Ok(OrderSide::Sell),
         _ => Err(SbeError::InvalidEnumValue(value)),
+    }
+}
+
+/// Encodes [`SettlementMethod`] to two SBE bytes: `method_tag` + `blockchain_tag`.
+///
+/// Wire layout: `[method(1B)][blockchain(1B)]`
+/// - `method = 0` → `OffChain`, blockchain byte is `0` (ignored).
+/// - `method = 1` → `OnChain(chain)`, blockchain byte encodes the chain.
+#[inline]
+#[must_use]
+fn encode_settlement_method(method: SettlementMethod) -> [u8; 2] {
+    match method {
+        SettlementMethod::OffChain => [0, 0],
+        SettlementMethod::OnChain(chain) => [1, chain.as_u8()],
+    }
+}
+
+/// Decodes [`SettlementMethod`] from two SBE bytes: `method_tag` + `blockchain_tag`.
+///
+/// # Errors
+///
+/// Returns [`SbeError::InvalidEnumValue`] if `method_tag` is unrecognized,
+/// or if it's `OnChain` and `blockchain_tag` is unrecognized.
+#[inline]
+fn decode_settlement_method(buffer: &[u8; 2]) -> SbeResult<SettlementMethod> {
+    match buffer[0] {
+        0 => Ok(SettlementMethod::OffChain),
+        1 => Blockchain::from_u8(buffer[1])
+            .map(SettlementMethod::OnChain)
+            .ok_or(SbeError::InvalidEnumValue(buffer[1])),
+        _ => Err(SbeError::InvalidEnumValue(buffer[0])),
+    }
+}
+
+/// Encodes an `Option<Decimal>` fee as a presence flag + [`SbeDecimal`] (10 bytes total).
+///
+/// Wire layout: `[present(1B)][mantissa(8B)][exponent(1B)]`
+///
+/// # Errors
+///
+/// Returns an error if the buffer is too small.
+#[inline]
+fn encode_optional_fee(fee: Option<rust_decimal::Decimal>, buffer: &mut [u8]) -> SbeResult<()> {
+    const SIZE: usize = 1 + SbeDecimal::SIZE; // 10 bytes
+    if buffer.len() < SIZE {
+        return Err(SbeError::BufferTooSmall {
+            needed: SIZE,
+            available: buffer.len(),
+        });
+    }
+    match fee {
+        None => {
+            buffer[0] = 0;
+            buffer[1..SIZE].fill(0);
+        }
+        Some(dec) => {
+            buffer[0] = 1;
+            SbeDecimal::from_decimal(dec).encode(&mut buffer[1..])?;
+        }
+    }
+    Ok(())
+}
+
+/// Decodes an `Option<Decimal>` fee from a presence flag + [`SbeDecimal`] (10 bytes).
+///
+/// # Errors
+///
+/// Returns an error if the buffer is too small or the decimal is invalid.
+#[inline]
+fn decode_optional_fee(buffer: &[u8]) -> SbeResult<Option<rust_decimal::Decimal>> {
+    const SIZE: usize = 1 + SbeDecimal::SIZE; // 10 bytes
+    if buffer.len() < SIZE {
+        return Err(SbeError::BufferTooSmall {
+            needed: SIZE,
+            available: buffer.len(),
+        });
+    }
+    match buffer[0] {
+        0 => Ok(None),
+        1 => Ok(Some(SbeDecimal::decode(&buffer[1..])?.to_decimal()?)),
+        _ => Err(SbeError::InvalidEnumValue(buffer[0])),
     }
 }
 
@@ -464,9 +549,24 @@ impl SbeDecode for QuoteReceived {
 pub struct TradeExecutedCodec;
 
 impl TradeExecutedCodec {
-    /// Fixed block length.
-    /// eventId(16) + rfqId(16) + tradeId(16) + quoteId(16) + price(9) + quantity(9) + executedAt(8)
-    const BLOCK_LENGTH: u16 = 16 + 16 + 16 + 16 + 9 + 9 + 8; // 90 bytes
+    /// Fixed block length (bytes).
+    ///
+    /// Layout:
+    /// - eventId(16) + rfqId(16) + tradeId(16) + quoteId(16) = 64
+    /// - price(9) + quantity(9) + executedAt(8)               = 26
+    /// - hasTakerFee(1) + takerFee(9)                         = 10
+    /// - hasMakerFee(1) + makerFee(9)                         = 10
+    /// - hasNetFee(1) + netFee(9)                             = 10
+    /// - settlementMethod(1) + blockchain(1)                  =  2
+    ///
+    /// Total: 122 bytes
+    const BLOCK_LENGTH: u16 = 64 + 26 + 10 + 10 + 10 + 2; // 122 bytes
+
+    /// Byte size of an optional fee field on the wire: presence flag + `SbeDecimal`.
+    const OPTIONAL_FEE_SIZE: usize = 1 + SbeDecimal::SIZE; // 10 bytes
+
+    /// Byte size of the settlement method field on the wire: method tag + blockchain tag.
+    const SETTLEMENT_SIZE: usize = 2;
 }
 
 impl SbeEncode for TradeExecuted {
@@ -537,6 +637,24 @@ impl SbeEncode for TradeExecuted {
         buffer[offset..offset + 8].copy_from_slice(&executed_nanos.to_le_bytes());
         offset += 8;
 
+        // takerFee (presence flag + SbeDecimal)
+        encode_optional_fee(self.taker_fee, &mut buffer[offset..])?;
+        offset += TradeExecutedCodec::OPTIONAL_FEE_SIZE;
+
+        // makerFee (presence flag + SbeDecimal)
+        encode_optional_fee(self.maker_fee, &mut buffer[offset..])?;
+        offset += TradeExecutedCodec::OPTIONAL_FEE_SIZE;
+
+        // netFee (presence flag + SbeDecimal)
+        encode_optional_fee(self.net_fee, &mut buffer[offset..])?;
+        offset += TradeExecutedCodec::OPTIONAL_FEE_SIZE;
+
+        // settlementMethod (method_tag + blockchain_tag)
+        let settlement_bytes = encode_settlement_method(self.settlement_method);
+        buffer[offset..offset + TradeExecutedCodec::SETTLEMENT_SIZE]
+            .copy_from_slice(&settlement_bytes);
+        offset += TradeExecutedCodec::SETTLEMENT_SIZE;
+
         // venueId (variable)
         let venue_size = encode_var_string(self.venue_id.as_str(), &mut buffer[offset..])?;
         offset += venue_size;
@@ -604,8 +722,39 @@ impl SbeDecode for TradeExecuted {
         ]);
         let executed_at = Timestamp::from_nanos(executed_nanos as i64)
             .ok_or_else(|| SbeError::InvalidTimestamp("invalid executed_at".to_string()))?;
+        offset += 8;
 
-        // Skip to variable fields
+        // takerFee, makerFee, netFee, settlementMethod
+        // These fields were introduced in version 2 of the TradeExecuted schema.
+        // For older versions, default fees to None and settlement_method to OffChain.
+        let (taker_fee, maker_fee, net_fee, settlement_method) = if _version >= 2 {
+            // takerFee
+            let taker_fee = decode_optional_fee(&buffer[offset..])?;
+            offset += TradeExecutedCodec::OPTIONAL_FEE_SIZE;
+
+            // makerFee
+            let maker_fee = decode_optional_fee(&buffer[offset..])?;
+            offset += TradeExecutedCodec::OPTIONAL_FEE_SIZE;
+
+            // netFee
+            let net_fee = decode_optional_fee(&buffer[offset..])?;
+            offset += TradeExecutedCodec::OPTIONAL_FEE_SIZE;
+
+            // settlementMethod (method_tag + blockchain_tag)
+            if offset + 2 > buffer.len() {
+                return Err(SbeError::InvalidTimestamp(
+                    "buffer too short for settlement_method".to_string(),
+                ));
+            }
+            let settlement_method =
+                decode_settlement_method(&[buffer[offset], buffer[offset + 1]])?;
+
+            (taker_fee, maker_fee, net_fee, settlement_method)
+        } else {
+            (None, None, None, SettlementMethod::OffChain)
+        };
+
+        // Skip to variable fields (using block_length from header for forward compatibility)
         let mut offset = MESSAGE_HEADER_SIZE + block_length as usize;
 
         // venueId
@@ -619,7 +768,6 @@ impl SbeDecode for TradeExecuted {
 
         // Reconstruct
         use crate::domain::events::domain_event::EventMetadata;
-        use crate::domain::value_objects::SettlementMethod;
 
         let mut metadata = EventMetadata::for_rfq(rfq_id);
         metadata.event_id = event_id;
@@ -633,7 +781,10 @@ impl SbeDecode for TradeExecuted {
             counterparty_id,
             price,
             quantity,
-            settlement_method: SettlementMethod::OffChain, // Default, not encoded
+            settlement_method,
+            taker_fee,
+            maker_fee,
+            net_fee,
         })
     }
 }
@@ -712,10 +863,12 @@ mod tests {
 
     mod trade_executed {
         use super::*;
-        use crate::domain::value_objects::SettlementMethod;
+        use crate::domain::value_objects::{Blockchain, SettlementMethod};
+        use rust_decimal::Decimal;
 
         #[test]
-        fn roundtrip() {
+        #[allow(deprecated)]
+        fn roundtrip_no_fees() {
             let event = TradeExecuted::new(
                 test_rfq_id(),
                 TradeId::new_v4(),
@@ -737,6 +890,89 @@ mod tests {
             assert_eq!(event.counterparty_id, decoded.counterparty_id);
             assert_eq!(event.price, decoded.price);
             assert_eq!(event.quantity, decoded.quantity);
+            assert_eq!(event.settlement_method, decoded.settlement_method);
+            assert_eq!(decoded.taker_fee, None);
+            assert_eq!(decoded.maker_fee, None);
+            assert_eq!(decoded.net_fee, None);
+        }
+
+        #[test]
+        fn roundtrip_with_all_fees() {
+            let event = TradeExecuted::builder()
+                .rfq_id(test_rfq_id())
+                .trade_id(TradeId::new_v4())
+                .quote_id(QuoteId::new_v4())
+                .venue_id(test_venue_id())
+                .counterparty_id(test_client_id())
+                .price(Price::new(50000.0).unwrap())
+                .quantity(Quantity::new(1.0).unwrap())
+                .settlement_method(SettlementMethod::OnChain(Blockchain::Ethereum))
+                .taker_fee(Decimal::new(50, 2)) // 0.50
+                .maker_fee(Decimal::new(25, 2)) // 0.25
+                .net_fee(Decimal::new(75, 2)) // 0.75
+                .build();
+
+            let encoded = event.encode_to_vec().unwrap();
+            let decoded = TradeExecuted::decode(&encoded).unwrap();
+
+            assert_eq!(event.settlement_method, decoded.settlement_method);
+            assert_eq!(event.taker_fee, decoded.taker_fee);
+            assert_eq!(event.maker_fee, decoded.maker_fee);
+            assert_eq!(event.net_fee, decoded.net_fee);
+        }
+
+        #[test]
+        fn roundtrip_partial_fees() {
+            let event = TradeExecuted::builder()
+                .rfq_id(test_rfq_id())
+                .trade_id(TradeId::new_v4())
+                .quote_id(QuoteId::new_v4())
+                .venue_id(test_venue_id())
+                .counterparty_id(test_client_id())
+                .price(Price::new(50000.0).unwrap())
+                .quantity(Quantity::new(1.0).unwrap())
+                .settlement_method(SettlementMethod::OffChain)
+                .taker_fee(Decimal::new(100, 2)) // only taker_fee set
+                .build();
+
+            let encoded = event.encode_to_vec().unwrap();
+            let decoded = TradeExecuted::decode(&encoded).unwrap();
+
+            assert_eq!(event.taker_fee, decoded.taker_fee);
+            assert_eq!(decoded.maker_fee, None);
+            assert_eq!(decoded.net_fee, None);
+            assert_eq!(decoded.settlement_method, SettlementMethod::OffChain);
+        }
+
+        #[test]
+        fn roundtrip_all_blockchain_variants() {
+            let chains = [
+                Blockchain::Ethereum,
+                Blockchain::Polygon,
+                Blockchain::Arbitrum,
+                Blockchain::Optimism,
+                Blockchain::Base,
+            ];
+            for chain in chains {
+                let event = TradeExecuted::builder()
+                    .rfq_id(test_rfq_id())
+                    .trade_id(TradeId::new_v4())
+                    .quote_id(QuoteId::new_v4())
+                    .venue_id(test_venue_id())
+                    .counterparty_id(test_client_id())
+                    .price(Price::new(50000.0).unwrap())
+                    .quantity(Quantity::new(1.0).unwrap())
+                    .settlement_method(SettlementMethod::OnChain(chain))
+                    .build();
+
+                let encoded = event.encode_to_vec().unwrap();
+                let decoded = TradeExecuted::decode(&encoded).unwrap();
+                assert_eq!(
+                    decoded.settlement_method,
+                    SettlementMethod::OnChain(chain),
+                    "failed for blockchain {chain:?}"
+                );
+            }
         }
     }
 }

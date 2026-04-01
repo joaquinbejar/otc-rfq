@@ -81,7 +81,7 @@ impl EventStore for PostgresEventStore {
         Ok(())
     }
 
-    async fn get_events(&self, rfq_id: &RfqId) -> EventStoreResult<Vec<StoredEvent>> {
+    async fn get_events(&self, rfq_id: RfqId) -> EventStoreResult<Vec<StoredEvent>> {
         let rfq_id_str = rfq_id.to_string();
 
         let rows: Vec<EventRow> = sqlx::query_as(
@@ -159,7 +159,7 @@ impl EventStore for PostgresEventStore {
         Ok(count as u64)
     }
 
-    async fn count_for_rfq(&self, rfq_id: &RfqId) -> EventStoreResult<u64> {
+    async fn count_for_rfq(&self, rfq_id: RfqId) -> EventStoreResult<u64> {
         let rfq_id_str = rfq_id.to_string();
 
         let (count,): (i64,) =
@@ -172,7 +172,7 @@ impl EventStore for PostgresEventStore {
         Ok(count as u64)
     }
 
-    async fn next_sequence(&self, rfq_id: &RfqId) -> EventStoreResult<u64> {
+    async fn next_sequence(&self, rfq_id: RfqId) -> EventStoreResult<u64> {
         let rfq_id_str = rfq_id.to_string();
 
         let result: Option<(i64,)> =

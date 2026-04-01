@@ -139,6 +139,8 @@ pub struct Quote {
     metadata: Option<QuoteMetadata>,
     /// When this quote was created.
     created_at: Timestamp,
+    /// Whether this quote requires last-look confirmation from the MM.
+    last_look_required: bool,
 }
 
 impl Quote {
@@ -193,6 +195,7 @@ impl Quote {
             valid_until,
             metadata: None,
             created_at: Timestamp::now(),
+            last_look_required: false,
         })
     }
 
@@ -214,6 +217,7 @@ impl Quote {
         valid_until: Timestamp,
         metadata: Option<QuoteMetadata>,
         created_at: Timestamp,
+        last_look_required: bool,
     ) -> Self {
         Self {
             id,
@@ -225,6 +229,7 @@ impl Quote {
             valid_until,
             metadata,
             created_at,
+            last_look_required,
         }
     }
 
@@ -328,6 +333,20 @@ impl Quote {
     #[must_use]
     pub fn created_at(&self) -> Timestamp {
         self.created_at
+    }
+
+    /// Returns whether this quote requires last-look confirmation from the MM.
+    #[inline]
+    #[must_use]
+    pub fn last_look_required(&self) -> bool {
+        self.last_look_required
+    }
+
+    /// Sets whether this quote requires last-look confirmation.
+    #[must_use]
+    pub fn with_last_look_required(mut self, required: bool) -> Self {
+        self.last_look_required = required;
+        self
     }
 
     /// Returns true if this quote has expired.
@@ -465,6 +484,7 @@ impl QuoteBuilder {
             valid_until: self.valid_until,
             metadata: self.metadata,
             created_at: Timestamp::now(),
+            last_look_required: false,
         }
     }
 
@@ -488,6 +508,7 @@ impl QuoteBuilder {
             valid_until: self.valid_until,
             metadata: self.metadata,
             created_at: Timestamp::now(),
+            last_look_required: false,
         })
     }
 }

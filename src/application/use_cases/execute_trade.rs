@@ -11,7 +11,7 @@ use crate::application::use_cases::create_rfq::RfqRepository;
 use crate::domain::entities::rfq::Rfq;
 use crate::domain::entities::trade::Trade;
 use crate::domain::events::TradeExecuted;
-use crate::domain::value_objects::{QuoteId, RfqId, TradeId};
+use crate::domain::value_objects::{QuoteId, RfqId, TradeId, TradeParticipant};
 use crate::infrastructure::venues::traits::ExecutionResult;
 use async_trait::async_trait;
 use std::fmt;
@@ -43,6 +43,19 @@ pub trait TradeEventPublisher: Send + Sync + fmt::Debug {
         rfq_id: RfqId,
         quote_id: QuoteId,
         reason: &str,
+    ) -> ApplicationResult<()>;
+
+    /// Publishes a position updated event.
+    ///
+    /// This event notifies the Position Manager to update positions,
+    /// trigger Greeks recalculation, and compute margin impact.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the event cannot be published.
+    async fn publish_position_updated(
+        &self,
+        event: crate::domain::events::PositionUpdated,
     ) -> ApplicationResult<()>;
 }
 
@@ -109,6 +122,9 @@ pub struct ExecuteTradeUseCase {
     trade_repository: Arc<dyn TradeRepository>,
     event_publisher: Arc<dyn TradeEventPublisher>,
     venue_registry: Arc<dyn VenueRegistry>,
+    confirmation_service: Option<Arc<dyn crate::domain::services::ConfirmationService>>,
+    counterparty_repository:
+        Option<Arc<dyn crate::infrastructure::persistence::traits::CounterpartyRepository>>,
 }
 
 impl ExecuteTradeUseCase {
@@ -125,7 +141,23 @@ impl ExecuteTradeUseCase {
             trade_repository,
             event_publisher,
             venue_registry,
+            confirmation_service: None,
+            counterparty_repository: None,
         }
+    }
+
+    /// Sets the confirmation service for multi-channel trade confirmations.
+    #[must_use]
+    pub fn with_confirmation_service(
+        mut self,
+        confirmation_service: Arc<dyn crate::domain::services::ConfirmationService>,
+        counterparty_repository: Arc<
+            dyn crate::infrastructure::persistence::traits::CounterpartyRepository,
+        >,
+    ) -> Self {
+        self.confirmation_service = Some(confirmation_service);
+        self.counterparty_repository = Some(counterparty_repository);
+        self
     }
 
     /// Executes a trade for the given request.
@@ -208,18 +240,50 @@ impl ExecuteTradeUseCase {
             .await
             .map_err(ApplicationError::RepositoryError)?;
 
-        // Publish event
-        let event = TradeExecuted::new(
+        // Publish trade executed event
+        let event = TradeExecuted::builder()
+            .rfq_id(rfq.id())
+            .trade_id(trade.id())
+            .quote_id(quote.id())
+            .venue_id(quote.venue_id().clone())
+            .counterparty_id(rfq.client_id().clone())
+            .price(trade.price())
+            .quantity(trade.quantity())
+            .settlement_method(execution_result.settlement_method())
+            .build();
+        self.event_publisher
+            .publish_trade_executed(event.clone())
+            .await?;
+
+        // Publish position update event (Position Manager will handle Greeks + margin)
+        let position_event = crate::domain::events::PositionUpdated::new(
             rfq.id(),
             trade.id(),
-            quote.id(),
-            quote.venue_id().clone(),
             rfq.client_id().clone(),
-            trade.price(),
+            rfq.side(),
+            quote.venue_id().clone(),
+            rfq.side().opposite(),
+            rfq.instrument().clone(),
             trade.quantity(),
-            execution_result.settlement_method(),
+            trade.price(),
         );
-        self.event_publisher.publish_trade_executed(event).await?;
+        self.event_publisher
+            .publish_position_updated(position_event)
+            .await?;
+
+        // Send multi-channel trade confirmations (non-blocking)
+        if let (Some(confirmation_service), Some(counterparty_repo)) =
+            (&self.confirmation_service, &self.counterparty_repository)
+        {
+            self.send_trade_confirmations(
+                &trade,
+                &event,
+                &rfq,
+                Arc::clone(confirmation_service),
+                Arc::clone(counterparty_repo),
+            )
+            .await;
+        }
 
         let execution_time_ms = start.elapsed().as_millis() as u64;
 
@@ -250,6 +314,88 @@ impl ExecuteTradeUseCase {
                 result.executed_quantity(),
             )
         }
+    }
+
+    /// Sends trade confirmations to counterparty via configured channels.
+    ///
+    /// This is a fire-and-forget operation that doesn't block trade execution.
+    /// Failures in confirmation delivery are logged but don't affect the trade.
+    async fn send_trade_confirmations(
+        &self,
+        trade: &Trade,
+        event: &TradeExecuted,
+        rfq: &Rfq,
+        confirmation_service: Arc<dyn crate::domain::services::ConfirmationService>,
+        counterparty_repo: Arc<
+            dyn crate::infrastructure::persistence::traits::CounterpartyRepository,
+        >,
+    ) {
+        use crate::domain::value_objects::{OrderSide, TradeConfirmation};
+
+        let counterparty_id = rfq.client_id();
+
+        // Load counterparty to get notification preferences
+        let counterparty = match counterparty_repo.get(counterparty_id).await {
+            Ok(Some(cp)) => cp,
+            Ok(None) => {
+                tracing::warn!(
+                    trade_id = %trade.id(),
+                    counterparty_id = %counterparty_id,
+                    "Counterparty not found, skipping confirmation"
+                );
+                return;
+            }
+            Err(e) => {
+                tracing::error!(
+                    trade_id = %trade.id(),
+                    counterparty_id = %counterparty_id,
+                    error = %e,
+                    "Failed to load counterparty for confirmation"
+                );
+                return;
+            }
+        };
+
+        // Determine buyer and seller based on RFQ side
+        // Client is the requester, venue is the liquidity provider
+        let (buyer, seller) = match rfq.side() {
+            OrderSide::Buy => (
+                TradeParticipant::Counterparty(counterparty_id.clone()),
+                TradeParticipant::Venue(event.venue_id.clone()),
+            ),
+            OrderSide::Sell => (
+                TradeParticipant::Venue(event.venue_id.clone()),
+                TradeParticipant::Counterparty(counterparty_id.clone()),
+            ),
+        };
+
+        // Build trade confirmation
+        let confirmation = TradeConfirmation::new(
+            trade.id(),
+            trade.rfq_id(),
+            trade.price(),
+            trade.quantity(),
+            event.taker_fee.unwrap_or_default(),
+            event.maker_fee.unwrap_or_default(),
+            event.net_fee.unwrap_or_default(),
+            event.settlement_method,
+            buyer,
+            seller,
+        );
+
+        // Send confirmation (async, non-blocking)
+        let preferences = counterparty.notification_preferences().clone();
+        tokio::spawn(async move {
+            let status = confirmation_service
+                .send_confirmation(&confirmation, &preferences)
+                .await;
+
+            tracing::info!(
+                trade_id = %confirmation.trade_id(),
+                status = %status,
+                "Trade confirmation delivery completed"
+            );
+        });
     }
 }
 
@@ -331,6 +477,17 @@ mod tests {
     #[derive(Debug, Default)]
     struct MockTradeEventPublisher {
         events: Mutex<Vec<TradeExecuted>>,
+        position_events: Mutex<Vec<crate::domain::events::PositionUpdated>>,
+    }
+
+    impl MockTradeEventPublisher {
+        fn position_event_count(&self) -> usize {
+            self.position_events.lock().unwrap().len()
+        }
+
+        fn last_position_event(&self) -> Option<crate::domain::events::PositionUpdated> {
+            self.position_events.lock().unwrap().last().cloned()
+        }
     }
 
     #[async_trait]
@@ -346,6 +503,14 @@ mod tests {
             _quote_id: QuoteId,
             _reason: &str,
         ) -> ApplicationResult<()> {
+            Ok(())
+        }
+
+        async fn publish_position_updated(
+            &self,
+            event: crate::domain::events::PositionUpdated,
+        ) -> ApplicationResult<()> {
+            self.position_events.lock().unwrap().push(event);
             Ok(())
         }
     }
@@ -490,12 +655,18 @@ mod tests {
         let (rfq, quote) = create_test_rfq_with_quote();
         let rfq_id = rfq.id();
         let quote_id = quote.id();
+        let client_id = rfq.client_id().clone();
+        let venue_id = quote.venue_id().clone();
+        let instrument = rfq.instrument().clone();
+        let side = rfq.side();
 
         let venue_adapter = Arc::new(MockVenueAdapter::successful("venue-1", quote_id));
-        let use_case = create_use_case(
-            MockRfqRepository::with_rfq(rfq),
-            MockTradeRepository::default(),
-            MockVenueRegistry::with_venue(venue_adapter),
+        let event_publisher = Arc::new(MockTradeEventPublisher::default());
+        let use_case = ExecuteTradeUseCase::new(
+            Arc::new(MockRfqRepository::with_rfq(rfq)),
+            Arc::new(MockTradeRepository::default()),
+            Arc::clone(&event_publisher) as Arc<dyn TradeEventPublisher>,
+            Arc::new(MockVenueRegistry::with_venue(venue_adapter)),
         );
 
         let request = ExecuteTradeRequest::new(rfq_id, quote_id);
@@ -505,6 +676,18 @@ mod tests {
         let response = result.unwrap();
         assert_eq!(response.rfq_id, rfq_id);
         assert!(response.execution_time_ms < 1000);
+
+        // Verify PositionUpdated event was published
+        assert_eq!(event_publisher.position_event_count(), 1);
+        let position_event = event_publisher.last_position_event().unwrap();
+        assert_eq!(position_event.trade_id, response.trade.id());
+        assert_eq!(position_event.requester_id, client_id);
+        assert_eq!(position_event.requester_side, side);
+        assert_eq!(position_event.mm_id, venue_id);
+        assert_eq!(position_event.mm_side, side.opposite());
+        assert_eq!(position_event.instrument, instrument);
+        assert_eq!(position_event.quantity, response.trade.quantity());
+        assert_eq!(position_event.price, response.trade.price());
     }
 
     #[tokio::test]

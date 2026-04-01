@@ -17,12 +17,15 @@
 //!
 //! | Variable | Description | Default |
 //! |----------|-------------|---------|
-//! | `OTC_RFQ_GRPC_HOST` | gRPC server host | `0.0.0.0` |
-//! | `OTC_RFQ_GRPC_PORT` | gRPC server port | `50051` |
 //! | `OTC_RFQ_REST_HOST` | REST server host | `0.0.0.0` |
 //! | `OTC_RFQ_REST_PORT` | REST server port | `8080` |
+//! | `OTC_RFQ_SBE_HOST` | SBE server host | `0.0.0.0` |
+//! | `OTC_RFQ_SBE_PORT` | SBE server port | `50052` |
 //! | `OTC_RFQ_LOG_LEVEL` | Log level | `info` |
 //! | `OTC_RFQ_LOG_FORMAT` | Log format (json/pretty) | `json` |
+//! | `OTC_RFQ_DATABASE_URL` | Database connection URL | `postgres://localhost/otc_rfq` |
+//! | `OTC_RFQ_SERVICE_NAME` | Service name for tracing | `otc-rfq` |
+//! | `OTC_RFQ_ENVIRONMENT` | Environment name | `development` |
 //!
 //! # Examples
 //!
@@ -30,7 +33,8 @@
 //! use otc_rfq::config::AppConfig;
 //!
 //! let config = AppConfig::load()?;
-//! println!("gRPC server: {}:{}", config.grpc.host, config.grpc.port);
+//! println!("SBE server: {}:{}", config.sbe.host, config.sbe.port);
+//! println!("REST server: {}:{}", config.rest.host, config.rest.port);
 //! ```
 
 use serde::{Deserialize, Serialize};
@@ -70,58 +74,6 @@ pub enum ConfigError {
 // ============================================================================
 // Server Configuration
 // ============================================================================
-
-/// gRPC server configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GrpcConfig {
-    /// Server host address.
-    #[serde(default = "default_host")]
-    pub host: String,
-
-    /// Server port.
-    #[serde(default = "default_grpc_port")]
-    pub port: u16,
-
-    /// Maximum concurrent connections.
-    #[serde(default = "default_max_connections")]
-    pub max_connections: usize,
-
-    /// Request timeout in seconds.
-    #[serde(default = "default_request_timeout")]
-    pub request_timeout_secs: u64,
-
-    /// Enable reflection service.
-    #[serde(default = "default_true")]
-    pub enable_reflection: bool,
-}
-
-impl Default for GrpcConfig {
-    fn default() -> Self {
-        Self {
-            host: default_host(),
-            port: default_grpc_port(),
-            max_connections: default_max_connections(),
-            request_timeout_secs: default_request_timeout(),
-            enable_reflection: true,
-        }
-    }
-}
-
-impl GrpcConfig {
-    /// Returns the socket address for the gRPC server.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the address cannot be parsed.
-    pub fn socket_addr(&self) -> Result<SocketAddr, ConfigError> {
-        format!("{}:{}", self.host, self.port)
-            .parse()
-            .map_err(|e| ConfigError::InvalidValue {
-                field: "grpc.host:port".to_string(),
-                message: format!("{e}"),
-            })
-    }
-}
 
 /// REST/HTTP server configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -175,6 +127,67 @@ impl RestConfig {
             .parse()
             .map_err(|e| ConfigError::InvalidValue {
                 field: "rest.host:port".to_string(),
+                message: format!("{e}"),
+            })
+    }
+}
+
+// ============================================================================
+// SBE Server Configuration
+// ============================================================================
+
+/// SBE TCP server configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SbeConfig {
+    /// Server host address.
+    #[serde(default = "default_host")]
+    pub host: String,
+
+    /// Server port.
+    #[serde(default = "default_sbe_port")]
+    pub port: u16,
+
+    /// Maximum concurrent connections.
+    #[serde(default = "default_max_connections")]
+    pub max_connections: usize,
+
+    /// Read timeout in seconds.
+    #[serde(default = "default_request_timeout")]
+    pub read_timeout_secs: u64,
+
+    /// Maximum message size in bytes.
+    #[serde(default = "default_max_message_size")]
+    pub max_message_size: usize,
+
+    /// Maximum subscriptions per connection.
+    #[serde(default = "default_max_subscriptions")]
+    pub max_subscriptions: usize,
+}
+
+impl Default for SbeConfig {
+    fn default() -> Self {
+        Self {
+            host: default_host(),
+            port: default_sbe_port(),
+            max_connections: default_max_connections(),
+            read_timeout_secs: default_request_timeout(),
+            max_message_size: default_max_message_size(),
+            max_subscriptions: default_max_subscriptions(),
+        }
+    }
+}
+
+impl SbeConfig {
+    /// Returns the socket address for the SBE server.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the address cannot be parsed.
+    pub fn socket_addr(&self) -> Result<SocketAddr, ConfigError> {
+        format!("{}:{}", self.host, self.port)
+            .parse()
+            .map_err(|e| ConfigError::InvalidValue {
+                field: "sbe.host:port".to_string(),
                 message: format!("{e}"),
             })
     }
@@ -323,13 +336,13 @@ impl Default for VenueConfig {
 /// Main application configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppConfig {
-    /// gRPC server configuration.
-    #[serde(default)]
-    pub grpc: GrpcConfig,
-
     /// REST server configuration.
     #[serde(default)]
     pub rest: RestConfig,
+
+    /// SBE server configuration.
+    #[serde(default)]
+    pub sbe: SbeConfig,
 
     /// Logging configuration.
     #[serde(default)]
@@ -387,16 +400,6 @@ impl AppConfig {
 
     /// Applies environment variable overrides to the configuration.
     fn apply_env_overrides(&mut self) {
-        // gRPC configuration
-        if let Ok(host) = std::env::var("OTC_RFQ_GRPC_HOST") {
-            self.grpc.host = host;
-        }
-        if let Ok(port) = std::env::var("OTC_RFQ_GRPC_PORT")
-            && let Ok(p) = port.parse()
-        {
-            self.grpc.port = p;
-        }
-
         // REST configuration
         if let Ok(host) = std::env::var("OTC_RFQ_REST_HOST") {
             self.rest.host = host;
@@ -405,6 +408,16 @@ impl AppConfig {
             && let Ok(p) = port.parse()
         {
             self.rest.port = p;
+        }
+
+        // SBE configuration
+        if let Ok(host) = std::env::var("OTC_RFQ_SBE_HOST") {
+            self.sbe.host = host;
+        }
+        if let Ok(port) = std::env::var("OTC_RFQ_SBE_PORT")
+            && let Ok(p) = port.parse()
+        {
+            self.sbe.port = p;
         }
 
         // Logging configuration
@@ -438,11 +451,11 @@ impl AppConfig {
     ///
     /// Returns an error if validation fails.
     pub fn validate(&self) -> Result<(), ConfigError> {
-        // Validate gRPC address
-        self.grpc.socket_addr()?;
-
         // Validate REST address
         self.rest.socket_addr()?;
+
+        // Validate SBE address
+        self.sbe.socket_addr()?;
 
         // Validate log level
         let valid_levels = ["trace", "debug", "info", "warn", "error"];
@@ -468,12 +481,12 @@ fn default_host() -> String {
     "0.0.0.0".to_string()
 }
 
-fn default_grpc_port() -> u16 {
-    50051
-}
-
 fn default_rest_port() -> u16 {
     8080
+}
+
+fn default_sbe_port() -> u16 {
+    50052
 }
 
 fn default_max_connections() -> usize {
@@ -520,6 +533,14 @@ fn default_max_concurrent_requests() -> usize {
     10
 }
 
+fn default_max_message_size() -> usize {
+    1024 * 1024 // 1 MB
+}
+
+fn default_max_subscriptions() -> usize {
+    100
+}
+
 fn default_service_name() -> String {
     "otc-rfq".to_string()
 }
@@ -536,16 +557,8 @@ mod tests {
     #[test]
     fn app_config_default() {
         let config = AppConfig::default();
-        assert_eq!(config.grpc.port, 50051);
         assert_eq!(config.rest.port, 8080);
         assert_eq!(config.log.level, "info");
-    }
-
-    #[test]
-    fn grpc_config_socket_addr() {
-        let config = GrpcConfig::default();
-        let addr = config.socket_addr().unwrap();
-        assert_eq!(addr.port(), 50051);
     }
 
     #[test]
@@ -572,15 +585,6 @@ mod tests {
         let mut config = AppConfig::default();
         config.log.level = "invalid".to_string();
         assert!(config.validate().is_err());
-    }
-
-    #[test]
-    fn grpc_config_invalid_address() {
-        let config = GrpcConfig {
-            host: "invalid host with spaces".to_string(),
-            ..Default::default()
-        };
-        assert!(config.socket_addr().is_err());
     }
 
     #[test]

@@ -74,7 +74,7 @@ The OTC RFQ System addresses these challenges by:
 | **FIX 4.4 Protocol** | Native support for traditional finance connectivity via [IronFix](https://github.com/joaquinbejar/IronFix) |
 | **DeFi Integration** | 0x, 1inch, Paraswap, Hashflow, Bebop, Uniswap V3, Curve |
 | **Event Sourcing** | Complete audit trail with domain event persistence |
-| **Multi-Protocol API** | gRPC (trading), REST (management), WebSocket (streaming) |
+| **Multi-Protocol API** | SBE (trading), REST (management), WebSocket (streaming) |
 | **Binary Encoding** | High-performance SBE encoding via [IronSBE](https://github.com/joaquinbejar/IronSBE) |
 
 ### Supported Venue Types
@@ -114,7 +114,7 @@ flowchart TB
 
     subgraph API["API LAYER"]
         direction TB
-        GRPC["gRPC<br/>(Trading)"]
+        SBE["SBE<br/>(Trading)"]
         REST["REST<br/>(Management)"]
         WS["WebSocket<br/>(Streaming)"]
     end
@@ -174,7 +174,7 @@ flowchart TB
 block-beta
     columns 1
     block:API["🌐 API LAYER"]
-        A1["Handles external communication (gRPC, REST, WebSocket)"]
+        A1["Handles external communication (SBE, REST, WebSocket)"]
         A2["Request/response serialization, authentication, rate limiting"]
     end
     block:APP["⚙️ APPLICATION LAYER"]
@@ -344,9 +344,9 @@ otc-rfq/
 │   │   └── sbe/                 # SBE binary encoding
 │   │
 │   ├── api/                     # External interfaces
-│   │   ├── grpc/                # gRPC services (tonic)
-│   │   │   ├── service.rs       # RFQ service implementation
-│   │   │   └── proto/           # Protocol buffer definitions
+│   │   ├── sbe/                 # SBE binary protocol (IronSBE)
+│   │   │   ├── server.rs        # SBE TCP server
+│   │   │   └── handlers.rs      # Request handlers
 │   │   ├── rest/                # REST endpoints (axum)
 │   │   │   ├── handlers.rs      # Request handlers
 │   │   │   └── routes.rs        # Route configuration
@@ -360,8 +360,6 @@ otc-rfq/
 │   ├── lib.rs                   # Library entry point
 │   └── main.rs                  # Application entry point
 │
-├── proto/                       # Protocol Buffer definitions
-│   └── rfq.proto                # gRPC service definitions
 ├── schemas/sbe/                 # SBE message schemas
 ├── migrations/                  # Database migrations
 ├── benches/                     # Performance benchmarks
@@ -377,7 +375,7 @@ otc-rfq/
 | **Language** | Rust | Performance, safety, async |
 | **Async Runtime** | Tokio | Industry standard for Rust async |
 | **Web Framework** | Axum | Modern, tower-based |
-| **gRPC** | Tonic | High-performance Rust gRPC |
+| **Binary Protocol** | IronSBE | Ultra-low-latency SBE |
 | **Database** | PostgreSQL | Reliability, JSON support |
 | **Cache** | Redis | Speed, pub/sub |
 | **Message Queue** | Kafka | Throughput, durability |
@@ -393,8 +391,8 @@ otc-rfq/
 [dependencies]
 tokio = { version = "1.49", features = ["full"] }
 axum = { version = "0.8", features = ["ws", "macros"] }
-tonic = { version = "0.14", features = ["transport", "tls"] }
 sqlx = { version = "0.8", features = ["postgres", "uuid", "chrono"] }
+ironsbe-core = "0.2.0"
 redis = { version = "1.0", features = ["tokio-comp"] }
 ethers = { version = "2.0", features = ["rustls"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -446,7 +444,7 @@ cargo add otc-rfq
 docker build -t otc-rfq:latest .
 
 # Run container
-docker run -p 50051:50051 -p 8080:8080 otc-rfq:latest
+docker run -p 50052:50052 -p 8080:8080 otc-rfq:latest
 ```
 
 ---
@@ -459,91 +457,42 @@ Create a `.env` file or set environment variables:
 
 ```bash
 # =============================================================================
-# Database Configuration
+# Core Configuration (match apply_env_overrides in src/config.rs)
 # =============================================================================
-DATABASE_URL=postgres://user:pass@localhost:5432/otc_rfq
-DATABASE_MAX_CONNECTIONS=20
-DATABASE_MIN_CONNECTIONS=5
-
-# =============================================================================
-# Redis Configuration
-# =============================================================================
-REDIS_URL=redis://localhost:6379
-REDIS_MAX_CONNECTIONS=10
-
-# =============================================================================
-# API Configuration
-# =============================================================================
-GRPC_PORT=50051
-REST_PORT=8080
-WEBSOCKET_PORT=8081
-
-# =============================================================================
-# Authentication
-# =============================================================================
-JWT_SECRET=your-secret-key-here
-JWT_EXPIRATION_HOURS=24
-API_KEY_HEADER=X-API-Key
-
-# =============================================================================
-# FIX Protocol (TradFi)
-# =============================================================================
-FIX_ENABLED=true
-FIX_SENDER_COMP_ID=OTC_RFQ
-FIX_TARGET_COMP_ID=MARKET_MAKER
-FIX_HOST=fix.marketmaker.com
-FIX_PORT=9878
-
-# =============================================================================
-# DeFi Venues
-# =============================================================================
-ZERO_X_API_KEY=your_api_key
-ZERO_X_BASE_URL=https://api.0x.org
-ONE_INCH_API_KEY=your_api_key
-ONE_INCH_BASE_URL=https://api.1inch.io
-HASHFLOW_API_KEY=your_api_key
-
-# =============================================================================
-# Blockchain
-# =============================================================================
-ETHEREUM_RPC_URL=https://mainnet.infura.io/v3/your-key
-POLYGON_RPC_URL=https://polygon-rpc.com
-ARBITRUM_RPC_URL=https://arb1.arbitrum.io/rpc
-
-# =============================================================================
-# Observability
-# =============================================================================
-LOG_LEVEL=info
-TRACING_ENABLED=true
-METRICS_PORT=9090
+OTC_RFQ_REST_HOST=0.0.0.0
+OTC_RFQ_REST_PORT=8080
+OTC_RFQ_SBE_HOST=0.0.0.0
+OTC_RFQ_SBE_PORT=50052
+OTC_RFQ_LOG_LEVEL=info
+OTC_RFQ_LOG_FORMAT=json
+OTC_RFQ_DATABASE_URL=postgres://user:pass@localhost:5432/otc_rfq
+OTC_RFQ_SERVICE_NAME=otc-rfq
+OTC_RFQ_ENVIRONMENT=production
+OTC_RFQ_CONFIG_FILE=config.toml
 ```
 
 ### Configuration File (TOML)
 
 ```toml
-[server]
-grpc_port = 50051
-rest_port = 8080
-websocket_port = 8081
+[rest]
+host = "0.0.0.0"
+port = 8080
+
+[sbe]
+host = "0.0.0.0"
+port = 50052
+
+[log]
+level = "info"
+format = "json"
 
 [database]
 url = "postgres://user:pass@localhost:5432/otc_rfq"
-max_connections = 20
-min_connections = 5
-
-[redis]
-url = "redis://localhost:6379"
-max_connections = 10
+pool_size = 20
 
 [venues]
 quote_timeout_ms = 500
-min_quotes_required = 1
 max_concurrent_requests = 100
-
-[compliance]
-kyc_required = true
-aml_check_enabled = true
-max_notional_usd = 10000000
 ```
 
 ---
@@ -563,42 +512,25 @@ cargo run --release
 CONFIG_PATH=./config.toml cargo run --release
 ```
 
-### gRPC Client Example
+### SBE Client Example
 
-```rust
-use otc_rfq::api::grpc::RfqServiceClient;
-use otc_rfq::api::grpc::{CreateRfqRequest, Instrument, OrderSide, AssetClass};
+The SBE API uses binary-encoded messages over a raw TCP connection.
+See the `tests/sbe_api_integration_test.rs` file for full working examples.
+
+```rust,ignore
+use tokio::net::TcpStream;
+use otc_rfq::api::sbe::codec;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Connect to gRPC server
-    let mut client = RfqServiceClient::connect("http://localhost:50051").await?;
-    
-    // Create RFQ
-    let response = client.create_rfq(CreateRfqRequest {
-        client_id: "DESK_001".to_string(),
-        instrument: Some(Instrument {
-            symbol: "BTC/USD".to_string(),
-            asset_class: AssetClass::CryptoSpot as i32,
-            ..Default::default()
-        }),
-        side: OrderSide::Buy as i32,
-        quantity: Some(Decimal { value: "10.0".to_string() }),
-        timeout_seconds: 30,
-    }).await?;
-    
-    let rfq = response.into_inner().rfq.unwrap();
-    println!("RFQ created: {}", rfq.id);
-    
-    // Stream quotes
-    let mut stream = client.stream_quotes(StreamQuotesRequest {
-        rfq_id: rfq.id.clone(),
-    }).await?.into_inner();
-    
-    while let Some(quote) = stream.message().await? {
-        println!("Quote received: {} @ {}", quote.venue_id, quote.price);
-    }
-    
+    // Connect to the SBE TCP server
+    let stream = TcpStream::connect("127.0.0.1:50052").await?;
+
+    // Encode a CreateRfqRequest using SBE binary framing
+    let request = codec::encode_create_rfq("DESK_001", "BTC/USD", /* ... */);
+    // Send the framed message and read the response
+    // (see integration tests for the full send/receive protocol)
+
     Ok(())
 }
 ```
@@ -667,18 +599,17 @@ ws.onmessage = (event) => {
 
 ## API Reference
 
-### gRPC Services
+### SBE Messages
 
-| Service | Method | Description |
-|---------|--------|-------------|
-| `RfqService` | `CreateRfq` | Create a new RFQ |
-| `RfqService` | `GetRfq` | Get RFQ by ID |
-| `RfqService` | `ListRfqs` | List RFQs with filters |
-| `RfqService` | `CancelRfq` | Cancel an active RFQ |
-| `RfqService` | `StreamQuotes` | Stream quotes for an RFQ |
-| `RfqService` | `ExecuteTrade` | Execute trade on selected quote |
-| `VenueService` | `ListVenues` | List available venues |
-| `VenueService` | `GetVenueHealth` | Get venue health status |
+| Message | Template ID | Description |
+|---------|-------------|-------------|
+| `CreateRfqRequest` | 1 | Create a new RFQ |
+| `GetRfqRequest` | 2 | Get RFQ by ID |
+| `CancelRfqRequest` | 3 | Cancel an active RFQ |
+| `ExecuteTradeRequest` | 4 | Execute trade on selected quote |
+| `SubscribeQuotesRequest` | 5 | Subscribe to quote updates |
+| `SubscribeRfqStatusRequest` | 6 | Subscribe to RFQ status updates |
+| `UnsubscribeRequest` | 7 | Unsubscribe from updates |
 
 ### REST Endpoints
 
@@ -910,7 +841,7 @@ cargo doc --open --no-deps
 - [x] **M1**: Domain Layer - Entities, value objects, domain events
 - [x] **M2**: Infrastructure Layer - Venues, persistence, blockchain
 - [x] **M3**: Application Layer - Use cases, services, DTOs
-- [x] **M4**: API Layer - gRPC, REST, WebSocket
+- [x] **M4**: API Layer - SBE, REST, WebSocket
 - [x] **M5**: Testing & Integration - Unit, integration, E2E tests
 
 ### Future Milestones
