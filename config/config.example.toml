@@ -9,9 +9,9 @@
 http_host = "0.0.0.0"
 http_port = 8080
 
-# gRPC server configuration
-grpc_host = "0.0.0.0"
-grpc_port = 50051
+# SBE server configuration
+sbe_host = "0.0.0.0"
+sbe_port = 50052
 
 # Metrics server configuration
 metrics_host = "0.0.0.0"

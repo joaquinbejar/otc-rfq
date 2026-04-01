@@ -74,7 +74,7 @@ The OTC RFQ System addresses these challenges by:
 | **FIX 4.4 Protocol** | Native support for traditional finance connectivity via [IronFix](https://github.com/joaquinbejar/IronFix) |
 | **DeFi Integration** | 0x, 1inch, Paraswap, Hashflow, Bebop, Uniswap V3, Curve |
 | **Event Sourcing** | Complete audit trail with domain event persistence |
-| **Multi-Protocol API** | gRPC (trading), REST (management), WebSocket (streaming) |
+| **Multi-Protocol API** | SBE (trading), REST (management), WebSocket (streaming) |
 | **Binary Encoding** | High-performance SBE encoding via [IronSBE](https://github.com/joaquinbejar/IronSBE) |
 
 ### Supported Venue Types
@@ -114,7 +114,7 @@ flowchart TB
 
     subgraph API["API LAYER"]
         direction TB
-        GRPC["gRPC<br/>(Trading)"]
+        SBE["SBE<br/>(Trading)"]
         REST["REST<br/>(Management)"]
         WS["WebSocket<br/>(Streaming)"]
     end
@@ -174,7 +174,7 @@ flowchart TB
 block-beta
     columns 1
     block:API["🌐 API LAYER"]
-        A1["Handles external communication (gRPC, REST, WebSocket)"]
+        A1["Handles external communication (SBE, REST, WebSocket)"]
         A2["Request/response serialization, authentication, rate limiting"]
     end
     block:APP["⚙️ APPLICATION LAYER"]
@@ -344,9 +344,9 @@ otc-rfq/
 │   │   └── sbe/                 # SBE binary encoding
 │   │
 │   ├── api/                     # External interfaces
-│   │   ├── grpc/                # gRPC services (tonic)
-│   │   │   ├── service.rs       # RFQ service implementation
-│   │   │   └── proto/           # Protocol buffer definitions
+│   │   ├── sbe/                 # SBE binary protocol (IronSBE)
+│   │   │   ├── server.rs        # SBE TCP server
+│   │   │   └── handlers.rs      # Request handlers
 │   │   ├── rest/                # REST endpoints (axum)
 │   │   │   ├── handlers.rs      # Request handlers
 │   │   │   └── routes.rs        # Route configuration
@@ -360,8 +360,6 @@ otc-rfq/
 │   ├── lib.rs                   # Library entry point
 │   └── main.rs                  # Application entry point
 │
-├── proto/                       # Protocol Buffer definitions
-│   └── rfq.proto                # gRPC service definitions
 ├── schemas/sbe/                 # SBE message schemas
 ├── migrations/                  # Database migrations
 ├── benches/                     # Performance benchmarks
@@ -377,7 +375,7 @@ otc-rfq/
 | **Language** | Rust | Performance, safety, async |
 | **Async Runtime** | Tokio | Industry standard for Rust async |
 | **Web Framework** | Axum | Modern, tower-based |
-| **gRPC** | Tonic | High-performance Rust gRPC |
+| **Binary Protocol** | IronSBE | Ultra-low-latency SBE |
 | **Database** | PostgreSQL | Reliability, JSON support |
 | **Cache** | Redis | Speed, pub/sub |
 | **Message Queue** | Kafka | Throughput, durability |
@@ -393,8 +391,8 @@ otc-rfq/
 [dependencies]
 tokio = { version = "1.49", features = ["full"] }
 axum = { version = "0.8", features = ["ws", "macros"] }
-tonic = { version = "0.14", features = ["transport", "tls"] }
 sqlx = { version = "0.8", features = ["postgres", "uuid", "chrono"] }
+ironsbe-core = "0.2.0"
 redis = { version = "1.0", features = ["tokio-comp"] }
 ethers = { version = "2.0", features = ["rustls"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -474,7 +472,7 @@ REDIS_MAX_CONNECTIONS=10
 # =============================================================================
 # API Configuration
 # =============================================================================
-GRPC_PORT=50051
+SBE_PORT=50052
 REST_PORT=8080
 WEBSOCKET_PORT=8081
 
@@ -522,7 +520,7 @@ METRICS_PORT=9090
 
 ```toml
 [server]
-grpc_port = 50051
+sbe_port = 50052
 rest_port = 8080
 websocket_port = 8081
 
@@ -563,21 +561,21 @@ cargo run --release
 CONFIG_PATH=./config.toml cargo run --release
 ```
 
-### gRPC Client Example
+### SBE Client Example
 
 ```rust
-use otc_rfq::api::grpc::RfqServiceClient;
-use otc_rfq::api::grpc::{CreateRfqRequest, Instrument, OrderSide, AssetClass};
+use otc_rfq::api::sbe::client::SbeClient;
+use otc_rfq::api::sbe::types::*;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Connect to gRPC server
-    let mut client = RfqServiceClient::connect("http://localhost:50051").await?;
+    // Connect to SBE server
+    let mut client = SbeClient::connect("127.0.0.1:50052").await?;
     
     // Create RFQ
     let response = client.create_rfq(CreateRfqRequest {
         client_id: "DESK_001".to_string(),
-        instrument: Some(Instrument {
+        instrument: Instrument {
             symbol: "BTC/USD".to_string(),
             asset_class: AssetClass::CryptoSpot as i32,
             ..Default::default()
@@ -667,18 +665,17 @@ ws.onmessage = (event) => {
 
 ## API Reference
 
-### gRPC Services
+### SBE Messages
 
-| Service | Method | Description |
-|---------|--------|-------------|
-| `RfqService` | `CreateRfq` | Create a new RFQ |
-| `RfqService` | `GetRfq` | Get RFQ by ID |
-| `RfqService` | `ListRfqs` | List RFQs with filters |
-| `RfqService` | `CancelRfq` | Cancel an active RFQ |
-| `RfqService` | `StreamQuotes` | Stream quotes for an RFQ |
-| `RfqService` | `ExecuteTrade` | Execute trade on selected quote |
-| `VenueService` | `ListVenues` | List available venues |
-| `VenueService` | `GetVenueHealth` | Get venue health status |
+| Message | Template ID | Description |
+|---------|-------------|-------------|
+| `CreateRfqRequest` | 1 | Create a new RFQ |
+| `GetRfqRequest` | 2 | Get RFQ by ID |
+| `CancelRfqRequest` | 3 | Cancel an active RFQ |
+| `ExecuteTradeRequest` | 4 | Execute trade on selected quote |
+| `SubscribeQuotesRequest` | 5 | Subscribe to quote updates |
+| `SubscribeRfqStatusRequest` | 6 | Subscribe to RFQ status updates |
+| `UnsubscribeRequest` | 7 | Unsubscribe from updates |
 
 ### REST Endpoints
 
@@ -910,7 +907,7 @@ cargo doc --open --no-deps
 - [x] **M1**: Domain Layer - Entities, value objects, domain events
 - [x] **M2**: Infrastructure Layer - Venues, persistence, blockchain
 - [x] **M3**: Application Layer - Use cases, services, DTOs
-- [x] **M4**: API Layer - gRPC, REST, WebSocket
+- [x] **M4**: API Layer - SBE, REST, WebSocket
 - [x] **M5**: Testing & Integration - Unit, integration, E2E tests
 
 ### Future Milestones

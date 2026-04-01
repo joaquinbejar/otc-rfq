@@ -17,7 +17,7 @@ services:
     restart: unless-stopped
     ports:
       - "8080:8080" # HTTP API
-      - "50051:50051" # gRPC
+      - "50052:50052" # SBE
       - "9090:9090" # Metrics
     environment:
       - RUST_LOG=info
@@ -62,7 +62,7 @@ services:
     container_name: otc-rfq-dev
     ports:
       - "8080:8080" # HTTP API
-      - "50051:50051" # gRPC
+      - "50052:50052" # SBE
       - "9090:9090" # Metrics
     environment:
       - RUST_LOG=debug
