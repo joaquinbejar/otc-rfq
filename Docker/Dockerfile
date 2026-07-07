@@ -8,7 +8,7 @@
 # -----------------------------------------------------------------------------
 # Stage 1: Chef - Prepare dependency recipe
 # -----------------------------------------------------------------------------
-FROM rust:1.93-alpine3.23 AS chef
+FROM rust:1.96.1-alpine3.23 AS chef
 
 RUN apk add --no-cache \
     musl-dev \
