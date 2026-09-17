@@ -30,8 +30,8 @@ fn generate_sbe_codecs() -> Result<(), Box<dyn std::error::Error>> {
 
     match ironsbe_codegen::generate_from_file(&schema_path) {
         Ok(generated_code) => {
+            // Success is the expected path: do not surface it as a build warning.
             std::fs::write(&output_path, generated_code)?;
-            println!("cargo:warning=SBE codecs generated successfully");
         }
         Err(e) => {
             // Write a placeholder module if generation fails

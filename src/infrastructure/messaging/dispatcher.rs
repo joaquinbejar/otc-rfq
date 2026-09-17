@@ -139,12 +139,12 @@ impl TradeEventPublisher for DomainEventDispatcher {
         // Publish to requester position update subject
         let requester_subject = format!(
             "{}.position.{}.updated",
-            self.subject_prefix, &event.requester_id
+            self.subject_prefix, event.requester_id
         );
         let requester_result = self.dispatch(requester_subject, &event).await;
 
         // Publish to MM position update subject
-        let mm_subject = format!("{}.position.{}.updated", self.subject_prefix, &event.mm_id);
+        let mm_subject = format!("{}.position.{}.updated", self.subject_prefix, event.mm_id);
         let mm_result = self.dispatch(mm_subject, &event).await;
 
         // If either publish failed, return the first encountered error

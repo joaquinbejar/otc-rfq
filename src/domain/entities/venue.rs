@@ -323,11 +323,7 @@ impl VenueMetrics {
     /// Returns the average latency in milliseconds.
     #[must_use]
     pub fn average_latency_ms(&self) -> Option<u64> {
-        if self.total_requests == 0 {
-            None
-        } else {
-            Some(self.total_latency_ms / self.total_requests)
-        }
+        self.total_latency_ms.checked_div(self.total_requests)
     }
 
     /// Returns the success rate as a percentage (0-100).

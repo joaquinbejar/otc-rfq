@@ -34,7 +34,7 @@
 //! simulator.start().await?;
 //!
 //! // Get wire-ready encoded message
-//! let encoded = simulator.encode_logon();
+//! let encoded = simulator.encode_logon()?;
 //! ```
 
 use std::collections::VecDeque;
@@ -43,6 +43,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use bytes::BytesMut;
+use ironfix_core::EncodeError;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
@@ -840,11 +841,21 @@ impl FixSimulator {
     // IronFix Encoding Methods
     // ========================================================================
 
+    /// Stamps the frame built by `encoder` and copies it into an owned buffer.
+    fn finish_frame(encoder: &mut ironfix_tagvalue::Encoder) -> Result<BytesMut, EncodeError> {
+        let mut out = BytesMut::new();
+        encoder.finish_into(&mut out)?;
+        Ok(out)
+    }
+
     /// Encodes a Logon message using IronFix.
     ///
     /// Returns a wire-ready FIX message with proper header and checksum.
-    #[must_use]
-    pub fn encode_logon(&self) -> BytesMut {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncodeError`] if the encoder rejects a field.
+    pub fn encode_logon(&self) -> Result<BytesMut, EncodeError> {
         let mut encoder = ironfix_tagvalue::Encoder::new("FIX.4.4");
 
         // MsgType = A (Logon)
@@ -861,14 +872,17 @@ impl FixSimulator {
         encoder.put_uint(session_tags::HEART_BT_INT, 30); // 30 second heartbeat
         encoder.put_str(session_tags::RESET_SEQ_NUM_FLAG, "Y");
 
-        encoder.finish()
+        Self::finish_frame(&mut encoder)
     }
 
     /// Encodes a Logout message using IronFix.
     ///
     /// Returns a wire-ready FIX message with proper header and checksum.
-    #[must_use]
-    pub fn encode_logout(&self, text: Option<&str>) -> BytesMut {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncodeError`] if the encoder rejects a field.
+    pub fn encode_logout(&self, text: Option<&str>) -> Result<BytesMut, EncodeError> {
         let mut encoder = ironfix_tagvalue::Encoder::new("FIX.4.4");
 
         // MsgType = 5 (Logout)
@@ -885,14 +899,17 @@ impl FixSimulator {
             encoder.put_str(tags::TEXT, t);
         }
 
-        encoder.finish()
+        Self::finish_frame(&mut encoder)
     }
 
     /// Encodes a Heartbeat message using IronFix.
     ///
     /// Returns a wire-ready FIX message with proper header and checksum.
-    #[must_use]
-    pub fn encode_heartbeat(&self, test_req_id: Option<&str>) -> BytesMut {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncodeError`] if the encoder rejects a field.
+    pub fn encode_heartbeat(&self, test_req_id: Option<&str>) -> Result<BytesMut, EncodeError> {
         let mut encoder = ironfix_tagvalue::Encoder::new("FIX.4.4");
 
         // MsgType = 0 (Heartbeat)
@@ -909,14 +926,17 @@ impl FixSimulator {
             encoder.put_str(session_tags::TEST_REQ_ID, id);
         }
 
-        encoder.finish()
+        Self::finish_frame(&mut encoder)
     }
 
     /// Encodes a TestRequest message using IronFix.
     ///
     /// Returns a wire-ready FIX message with proper header and checksum.
-    #[must_use]
-    pub fn encode_test_request(&self, test_req_id: &str) -> BytesMut {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncodeError`] if the encoder rejects a field.
+    pub fn encode_test_request(&self, test_req_id: &str) -> Result<BytesMut, EncodeError> {
         let mut encoder = ironfix_tagvalue::Encoder::new("FIX.4.4");
 
         // MsgType = 1 (TestRequest)
@@ -931,13 +951,16 @@ impl FixSimulator {
         // TestReqID
         encoder.put_str(session_tags::TEST_REQ_ID, test_req_id);
 
-        encoder.finish()
+        Self::finish_frame(&mut encoder)
     }
 
     /// Encodes a Quote message using IronFix.
     ///
     /// Returns a wire-ready FIX message with proper header and checksum.
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncodeError`] if the encoder rejects a field.
     pub fn encode_quote(
         &self,
         quote_req_id: &str,
@@ -945,7 +968,7 @@ impl FixSimulator {
         symbol: &str,
         req_side: &str,
         order_qty: &str,
-    ) -> BytesMut {
+    ) -> Result<BytesMut, EncodeError> {
         let mut encoder = ironfix_tagvalue::Encoder::new("FIX.4.4");
 
         // MsgType = S (Quote)
@@ -972,13 +995,16 @@ impl FixSimulator {
         encoder.put_str(tags::VALID_UNTIL_TIME, &valid_until.to_fix_format());
         encoder.put_str(tags::TRANSACT_TIME, &Timestamp::now().to_fix_format());
 
-        encoder.finish()
+        Self::finish_frame(&mut encoder)
     }
 
     /// Encodes an ExecutionReport (Fill) message using IronFix.
     ///
     /// Returns a wire-ready FIX message with proper header and checksum.
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncodeError`] if the encoder rejects a field.
     #[allow(clippy::too_many_arguments)]
     pub fn encode_execution_report_fill(
         &self,
@@ -989,7 +1015,7 @@ impl FixSimulator {
         order_side: &str,
         order_qty: &str,
         price: &str,
-    ) -> BytesMut {
+    ) -> Result<BytesMut, EncodeError> {
         let mut encoder = ironfix_tagvalue::Encoder::new("FIX.4.4");
 
         // MsgType = 8 (ExecutionReport)
@@ -1014,13 +1040,16 @@ impl FixSimulator {
         encoder.put_str(tags::LAST_QTY, order_qty);
         encoder.put_str(tags::TRANSACT_TIME, &Timestamp::now().to_fix_format());
 
-        encoder.finish()
+        Self::finish_frame(&mut encoder)
     }
 
     /// Encodes an ExecutionReport (Reject) message using IronFix.
     ///
     /// Returns a wire-ready FIX message with proper header and checksum.
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncodeError`] if the encoder rejects a field.
     pub fn encode_execution_report_reject(
         &self,
         cl_ord_id: &str,
@@ -1029,7 +1058,7 @@ impl FixSimulator {
         order_side: &str,
         order_qty: &str,
         reject_reason: &str,
-    ) -> BytesMut {
+    ) -> Result<BytesMut, EncodeError> {
         let mut encoder = ironfix_tagvalue::Encoder::new("FIX.4.4");
 
         // MsgType = 8 (ExecutionReport)
@@ -1052,7 +1081,7 @@ impl FixSimulator {
         encoder.put_str(tags::TEXT, reject_reason);
         encoder.put_str(tags::TRANSACT_TIME, &Timestamp::now().to_fix_format());
 
-        encoder.finish()
+        Self::finish_frame(&mut encoder)
     }
 }
 
@@ -1469,7 +1498,7 @@ mod tests {
         #[test]
         fn encode_logon_has_valid_structure() {
             let sim = default_simulator();
-            let encoded = sim.encode_logon();
+            let encoded = sim.encode_logon().unwrap();
 
             // Convert to string for inspection
             let msg = String::from_utf8_lossy(&encoded);
@@ -1487,7 +1516,7 @@ mod tests {
         #[test]
         fn encode_logout_has_valid_structure() {
             let sim = default_simulator();
-            let encoded = sim.encode_logout(Some("Session ended"));
+            let encoded = sim.encode_logout(Some("Session ended")).unwrap();
 
             let msg = String::from_utf8_lossy(&encoded);
 
@@ -1500,7 +1529,7 @@ mod tests {
         #[test]
         fn encode_heartbeat_has_valid_structure() {
             let sim = default_simulator();
-            let encoded = sim.encode_heartbeat(None);
+            let encoded = sim.encode_heartbeat(None).unwrap();
 
             let msg = String::from_utf8_lossy(&encoded);
 
@@ -1512,7 +1541,7 @@ mod tests {
         #[test]
         fn encode_heartbeat_with_test_req_id() {
             let sim = default_simulator();
-            let encoded = sim.encode_heartbeat(Some("TEST-123"));
+            let encoded = sim.encode_heartbeat(Some("TEST-123")).unwrap();
 
             let msg = String::from_utf8_lossy(&encoded);
 
@@ -1523,7 +1552,7 @@ mod tests {
         #[test]
         fn encode_test_request_has_valid_structure() {
             let sim = default_simulator();
-            let encoded = sim.encode_test_request("TR-001");
+            let encoded = sim.encode_test_request("TR-001").unwrap();
 
             let msg = String::from_utf8_lossy(&encoded);
 
@@ -1536,7 +1565,9 @@ mod tests {
         #[test]
         fn encode_quote_has_valid_structure() {
             let sim = default_simulator();
-            let encoded = sim.encode_quote("QR-001", "Q-001", "BTC/USD", side::BUY, "1.5");
+            let encoded = sim
+                .encode_quote("QR-001", "Q-001", "BTC/USD", side::BUY, "1.5")
+                .unwrap();
 
             let msg = String::from_utf8_lossy(&encoded);
 
@@ -1553,15 +1584,17 @@ mod tests {
         #[test]
         fn encode_execution_report_fill_has_valid_structure() {
             let sim = default_simulator();
-            let encoded = sim.encode_execution_report_fill(
-                "ORD-001",
-                "Q-001",
-                "EXEC-001",
-                "BTC/USD",
-                side::BUY,
-                "1.0",
-                "50050.0",
-            );
+            let encoded = sim
+                .encode_execution_report_fill(
+                    "ORD-001",
+                    "Q-001",
+                    "EXEC-001",
+                    "BTC/USD",
+                    side::BUY,
+                    "1.0",
+                    "50050.0",
+                )
+                .unwrap();
 
             let msg = String::from_utf8_lossy(&encoded);
 
@@ -1578,14 +1611,16 @@ mod tests {
         #[test]
         fn encode_execution_report_reject_has_valid_structure() {
             let sim = default_simulator();
-            let encoded = sim.encode_execution_report_reject(
-                "ORD-001",
-                "EXEC-001",
-                "BTC/USD",
-                side::BUY,
-                "1.0",
-                "Insufficient funds",
-            );
+            let encoded = sim
+                .encode_execution_report_reject(
+                    "ORD-001",
+                    "EXEC-001",
+                    "BTC/USD",
+                    side::BUY,
+                    "1.0",
+                    "Insufficient funds",
+                )
+                .unwrap();
 
             let msg = String::from_utf8_lossy(&encoded);
 
@@ -1602,9 +1637,9 @@ mod tests {
             let sim = default_simulator();
 
             // Encode multiple messages
-            let msg1 = sim.encode_heartbeat(None);
-            let msg2 = sim.encode_heartbeat(None);
-            let msg3 = sim.encode_heartbeat(None);
+            let msg1 = sim.encode_heartbeat(None).unwrap();
+            let msg2 = sim.encode_heartbeat(None).unwrap();
+            let msg3 = sim.encode_heartbeat(None).unwrap();
 
             let s1 = String::from_utf8_lossy(&msg1);
             let s2 = String::from_utf8_lossy(&msg2);
