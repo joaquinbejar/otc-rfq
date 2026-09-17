@@ -897,3 +897,17 @@ We appreciate your interest and look forward to your contributions!
 ---
 
 **License**: MIT
+
+<!-- related-projects:start -->
+## Related projects
+
+Repositories by the same author that this project depends on, and repositories that depend on it.
+
+### Depends on
+
+| Repository | Description |
+|------------|-------------|
+| [IronFix](https://github.com/joaquinbejar/IronFix) · [crates.io](https://crates.io/crates/ironfix-core) | Rust implementation of the FIX protocol for secure, high-performance financial messaging. |
+| [IronSBE](https://github.com/joaquinbejar/IronSBE) · [crates.io](https://crates.io/crates/ironsbe-core) | Rust implementation of Simple Binary Encoding (SBE) for ultra-low-latency systems. *(build and runtime dependency)* |
+
+<!-- related-projects:end -->
