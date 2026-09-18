@@ -25,14 +25,15 @@
 //!     .with_port(9876);
 //!
 //! let session = FixSession::new(config);
-//! let seq = session.allocate_sender_seq();
+//! let seq = session.allocate_sender_seq()?;
 //! ```
 
 use crate::infrastructure::venues::fix_config::FixSessionConfig;
+use std::num::NonZeroU64;
 use std::time::Duration;
 
 // Re-export IronFix session types
-pub use ironfix_session::{HeartbeatManager, SequenceManager};
+pub use ironfix_session::{HeartbeatManager, SequenceExhausted, SequenceManager};
 
 /// FIX session state enumeration.
 ///
@@ -115,8 +116,8 @@ impl FixSession {
     /// # Arguments
     ///
     /// * `config` - Session configuration
-    /// * `sender_seq` - Initial sender sequence number
-    /// * `target_seq` - Initial target sequence number
+    /// * `sender_seq` - Initial sender sequence number (0 is clamped to 1)
+    /// * `target_seq` - Initial target sequence number (0 is clamped to 1)
     #[must_use]
     pub fn with_initial_sequences(
         config: FixSessionConfig,
@@ -126,7 +127,10 @@ impl FixSession {
         let heartbeat_interval = Duration::from_secs(u64::from(config.heartbeat_interval()));
         Self {
             config,
-            sequence_manager: SequenceManager::with_initial(sender_seq, target_seq),
+            sequence_manager: SequenceManager::with_initial(
+                NonZeroU64::new(sender_seq).unwrap_or(NonZeroU64::MIN),
+                NonZeroU64::new(target_seq).unwrap_or(NonZeroU64::MIN),
+            ),
             heartbeat_manager: HeartbeatManager::new(heartbeat_interval),
             state: FixSessionState::Disconnected,
         }
@@ -183,17 +187,29 @@ impl FixSession {
     /// Allocates and returns the next sender sequence number.
     ///
     /// This atomically increments the sequence number.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SequenceExhausted`] if the counter has reached `u64::MAX`;
+    /// the session must reset its sequence numbers before sending again.
     #[inline]
-    pub fn allocate_sender_seq(&self) -> u64 {
-        self.sequence_manager.allocate_sender_seq().value()
+    pub fn allocate_sender_seq(&self) -> Result<u64, SequenceExhausted> {
+        self.sequence_manager
+            .try_allocate_sender_seq()
+            .map(|seq| seq.value())
     }
 
     /// Increments the target sequence number.
     ///
     /// Call this after successfully processing an incoming message.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SequenceExhausted`] if the counter has reached `u64::MAX`;
+    /// the session must reset its sequence numbers before accepting more.
     #[inline]
-    pub fn increment_target_seq(&self) {
-        self.sequence_manager.increment_target_seq();
+    pub fn increment_target_seq(&self) -> Result<(), SequenceExhausted> {
+        self.sequence_manager.try_increment_target_seq().map(|_| ())
     }
 
     /// Resets both sequence numbers to 1.
@@ -354,9 +370,9 @@ mod tests {
         #[test]
         fn allocate_sender_seq_increments() {
             let session = FixSession::new(test_config());
-            assert_eq!(session.allocate_sender_seq(), 1);
-            assert_eq!(session.allocate_sender_seq(), 2);
-            assert_eq!(session.allocate_sender_seq(), 3);
+            assert_eq!(session.allocate_sender_seq().unwrap(), 1);
+            assert_eq!(session.allocate_sender_seq().unwrap(), 2);
+            assert_eq!(session.allocate_sender_seq().unwrap(), 3);
             assert_eq!(session.next_sender_seq(), 4);
         }
 
@@ -364,16 +380,16 @@ mod tests {
         fn increment_target_seq() {
             let session = FixSession::new(test_config());
             assert_eq!(session.next_target_seq(), 1);
-            session.increment_target_seq();
+            session.increment_target_seq().unwrap();
             assert_eq!(session.next_target_seq(), 2);
         }
 
         #[test]
         fn reset_sequences() {
             let session = FixSession::new(test_config());
-            session.allocate_sender_seq();
-            session.allocate_sender_seq();
-            session.increment_target_seq();
+            session.allocate_sender_seq().unwrap();
+            session.allocate_sender_seq().unwrap();
+            session.increment_target_seq().unwrap();
 
             session.reset_sequences();
 

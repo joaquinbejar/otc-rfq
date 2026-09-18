@@ -114,11 +114,11 @@ async fn test_position_update_published_to_nats() {
             assert_eq!(deserialized.instrument, instrument);
 
             // Check which subject it was published to
-            if msg.subject.as_str() == format!("test_position.position.{}.updated", &requester_id) {
+            if msg.subject.as_str() == format!("test_position.position.{}.updated", requester_id) {
                 received_requester = true;
                 assert_eq!(deserialized.requester_id, requester_id);
                 assert_eq!(deserialized.requester_side, OrderSide::Buy);
-            } else if msg.subject.as_str() == format!("test_position.position.{}.updated", &mm_id) {
+            } else if msg.subject.as_str() == format!("test_position.position.{}.updated", mm_id) {
                 received_mm = true;
                 assert_eq!(deserialized.mm_id, mm_id);
                 assert_eq!(deserialized.mm_side, OrderSide::Sell);

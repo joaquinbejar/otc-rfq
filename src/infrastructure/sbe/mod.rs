@@ -41,7 +41,15 @@ pub mod types;
 
 // Generated SBE types from schemas/sbe/otc-rfq.xml
 // IronSBE v0.2.1 fixes repeating group namespacing (issue #5)
+// IronSBE v0.7 codegen output uses direct slicing and `panic!` on fixed-size
+// buffers, which trips this crate's restriction lints; generated code is exempt.
 #[allow(unsafe_code, clippy::transmute_int_to_bool, clippy::all)]
+#[allow(
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used
+)]
 #[allow(dead_code, unused_imports, non_camel_case_types, missing_docs)]
 pub mod generated {
     include!(concat!(env!("OUT_DIR"), "/sbe_generated.rs"));

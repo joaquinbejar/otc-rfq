@@ -46,7 +46,8 @@ use crate::infrastructure::venues::error::{VenueError, VenueResult};
 use crate::infrastructure::venues::fix_config::FixMMConfig;
 use crate::infrastructure::venues::traits::{ExecutionResult, VenueAdapter, VenueHealth};
 use async_trait::async_trait;
-use ironfix_core::message::{OwnedMessage, RawMessage};
+use ironfix_core::message::RawMessage;
+use ironfix_engine::OutboundMessage;
 use ironfix_engine::application::{Application, RejectReason, SessionId};
 use std::collections::HashMap;
 use std::fmt;
@@ -392,7 +393,7 @@ impl Application for FixApplication {
         *state = SessionState::Disconnected;
     }
 
-    async fn to_admin(&self, _message: &mut OwnedMessage, _session_id: &SessionId) {
+    async fn to_admin(&self, _message: &mut OutboundMessage, _session_id: &SessionId) {
         // No modification needed for admin messages
     }
 
@@ -405,7 +406,7 @@ impl Application for FixApplication {
         Ok(())
     }
 
-    async fn to_app(&self, _message: &mut OwnedMessage, _session_id: &SessionId) {
+    async fn to_app(&self, _message: &mut OutboundMessage, _session_id: &SessionId) {
         // No modification needed for outgoing app messages
     }
 
@@ -711,6 +712,15 @@ impl FixMMAdapter {
         ]
     }
 
+    /// Stamps the frame built by `encoder` and copies it into an owned buffer.
+    fn finish_frame(encoder: &mut ironfix_tagvalue::Encoder) -> VenueResult<bytes::BytesMut> {
+        let mut out = bytes::BytesMut::new();
+        encoder
+            .finish_into(&mut out)
+            .map_err(|e| VenueError::protocol_error(format!("FIX encode failed: {e}")))?;
+        Ok(out)
+    }
+
     /// Encodes a QuoteRequest FIX message using IronFix.
     ///
     /// Returns a complete FIX message with header and checksum.
@@ -718,11 +728,19 @@ impl FixMMAdapter {
     /// # Example
     ///
     /// ```ignore
-    /// let message = adapter.encode_quote_request(&rfq, "QR-001");
+    /// let message = adapter.encode_quote_request(&rfq, "QR-001")?;
     /// // message is ready to send over the wire
     /// ```
-    #[must_use]
-    pub fn encode_quote_request(&self, rfq: &Rfq, quote_req_id: &str) -> bytes::BytesMut {
+    ///
+    /// # Errors
+    ///
+    /// Returns `VenueError::ProtocolError` if the encoder rejects a field
+    /// (e.g. a value containing the SOH delimiter).
+    pub fn encode_quote_request(
+        &self,
+        rfq: &Rfq,
+        quote_req_id: &str,
+    ) -> VenueResult<bytes::BytesMut> {
         let fix_version = self.config.session().fix_version().as_str();
         let mut encoder = ironfix_tagvalue::Encoder::new(fix_version_to_static(fix_version));
 
@@ -742,13 +760,17 @@ impl FixMMAdapter {
         encoder.put_str(tags::ORDER_QTY, &rfq.quantity().get().to_string());
         encoder.put_str(tags::TRANSACT_TIME, &Timestamp::now().to_fix_format());
 
-        encoder.finish()
+        Self::finish_frame(&mut encoder)
     }
 
     /// Encodes a NewOrderSingle FIX message using IronFix.
     ///
     /// Returns a complete FIX message with header and checksum.
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Returns `VenueError::ProtocolError` if the encoder rejects a field
+    /// (e.g. a value containing the SOH delimiter).
     pub fn encode_new_order_single(
         &self,
         quote: &Quote,
@@ -756,7 +778,7 @@ impl FixMMAdapter {
         venue_quote_id: &str,
         symbol: &str,
         side: OrderSide,
-    ) -> bytes::BytesMut {
+    ) -> VenueResult<bytes::BytesMut> {
         let fix_version = self.config.session().fix_version().as_str();
         let mut encoder = ironfix_tagvalue::Encoder::new(fix_version_to_static(fix_version));
 
@@ -780,7 +802,7 @@ impl FixMMAdapter {
         encoder.put_str(tags::TIME_IN_FORCE, time_in_force::FOK);
         encoder.put_str(tags::TRANSACT_TIME, &Timestamp::now().to_fix_format());
 
-        encoder.finish()
+        Self::finish_frame(&mut encoder)
     }
 
     /// Parses a Quote FIX message response.
@@ -989,7 +1011,7 @@ impl VenueAdapter for FixMMAdapter {
         }
 
         // Build and send QuoteRequest message via IronFix engine
-        let message_data = self.encode_quote_request(rfq, &quote_req_id);
+        let message_data = self.encode_quote_request(rfq, &quote_req_id)?;
         let outgoing = OutgoingMessage::new(message_data, msg_type::QUOTE_REQUEST);
 
         if self.has_engine() {
@@ -1093,7 +1115,7 @@ impl VenueAdapter for FixMMAdapter {
             .unwrap_or(OrderSide::Buy);
 
         let message_data =
-            self.encode_new_order_single(quote, &cl_ord_id, &venue_quote_id, symbol, side);
+            self.encode_new_order_single(quote, &cl_ord_id, &venue_quote_id, symbol, side)?;
         let outgoing = OutgoingMessage::new(message_data, msg_type::NEW_ORDER_SINGLE);
 
         if self.has_engine() {
