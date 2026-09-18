@@ -1,6 +1,6 @@
 [package]
 name = "otc-rfq"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 authors = ["Joaquin Bejar <jb@taunais.com>"]
 description = "High-performance OTC Request-for-Quote engine supporting DeFi protocols and TradFi venues via FIX 4.4"
