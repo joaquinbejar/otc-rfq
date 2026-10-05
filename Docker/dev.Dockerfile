@@ -20,7 +20,7 @@ RUN apk add --no-cache \
 
 # Install development tools
 RUN cargo install cargo-watch --locked
-RUN cargo install cargo-tarpaulin --locked || true
+RUN cargo install cargo-tarpaulin --locked --version '>=0.37.5' || true
 
 # Create non-root user for development
 RUN addgroup -g 1000 dev \

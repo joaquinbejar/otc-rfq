@@ -86,7 +86,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - uses: Swatinem/rust-cache@v2
       - name: Install tarpaulin
-        run: cargo install cargo-tarpaulin
+        run: cargo install cargo-tarpaulin --locked --version '>=0.37.5'
       - name: Generate coverage
         run: cargo tarpaulin --all-features --timeout 120 --out Xml
         env:
