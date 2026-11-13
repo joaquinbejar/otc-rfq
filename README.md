@@ -885,7 +885,6 @@ gh pr create
 If you have any questions, issues, or would like to provide feedback, please feel free to contact the project maintainer:
 
 ### **Contact Information**
-
 - **Author**: Joaquín Béjar García
 - **Email**: jb@taunais.com
 - **Telegram**: [@joaquin_bejar](https://t.me/joaquin_bejar)
@@ -907,7 +906,7 @@ Repositories by the same author that this project depends on, and repositories t
 
 | Repository | Description |
 |------------|-------------|
-| [IronFix](https://github.com/joaquinbejar/IronFix) · [crates.io](https://crates.io/crates/ironfix-core) | Rust implementation of the FIX protocol for secure, high-performance financial messaging. |
-| [IronSBE](https://github.com/joaquinbejar/IronSBE) · [crates.io](https://crates.io/crates/ironsbe-core) | Rust implementation of Simple Binary Encoding (SBE) for ultra-low-latency systems. *(build and runtime dependency)* |
+| [IronFix](https://github.com/joaquinbejar/IronFix) | FIX 4.4 engine behind its FIX venue connectivity. |
+| [IronSBE](https://github.com/joaquinbejar/IronSBE) | SBE codec behind its binary quote streaming. |
 
 <!-- related-projects:end -->
